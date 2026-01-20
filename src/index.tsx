@@ -14,3 +14,13 @@ if (import.meta.env.DEV && !(root instanceof HTMLElement)) {
 }
 
 render(() => <App />, root!);
+
+// Register simple service worker for PWA offline support
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => {
+      // registration failed
+      console.warn('ServiceWorker registration failed:', err);
+    });
+  });
+}
