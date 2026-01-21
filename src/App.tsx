@@ -149,9 +149,9 @@ export default function App() {
             </div>
 
             <div class="flex gap-2 mb-4">
-                <button class="px-3 py-2 bg-teal-500 text-white rounded hover:bg-teal-600 active:scale-95 transition transform duration-150 ease-out shadow-sm hover:shadow-md focus:outline-none" onClick={startCamera}>Start Camera</button>
-                <button class="px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 active:scale-95 transition transform duration-150 ease-out shadow-sm hover:shadow-md focus:outline-none" onClick={createOffer}>Create Offer</button>
-                <button class="px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 active:scale-95 transition transform duration-150 ease-out shadow-sm hover:shadow-md focus:outline-none" onClick={applyRemoteSDP}>Apply Remote SDP</button>
+                <button class="px-3 py-2 bg-teal-500 text-white rounded" onClick={startCamera}>Start Camera</button>
+                <button class="px-3 py-2 bg-blue-600 text-white rounded" onClick={createOffer}>Create Offer</button>
+                <button class="px-3 py-2 bg-green-600 text-white rounded" onClick={applyRemoteSDP}>Apply Remote SDP</button>
             </div>
 
             <div class="grid grid-cols-2 gap-4">
@@ -164,7 +164,7 @@ export default function App() {
                     <label class="block text-xs font-medium mb-1">Remote SDP (paste here)</label>
                     <textarea class="w-full h-40 p-2 border rounded" onInput={(e) => setRemoteSDP((e.target as HTMLTextAreaElement).value)} value={remoteSDP()} />
                     <div class="flex gap-2 mt-2">
-                        <button class="px-2 py-1 bg-indigo-600 text-white rounded hover:bg-indigo-700 active:scale-95 transition transform duration-150 ease-out shadow-sm hover:shadow-md focus:outline-none" onClick={applyRemoteSDP}>Set Remote</button>
+                        <button class="px-2 py-1 bg-indigo-600 text-white rounded" onClick={applyRemoteSDP}>Set Remote</button>
                     </div>
                 </div>
             </div>
@@ -179,7 +179,7 @@ export default function App() {
                     </div>
                     <div class="flex gap-2 mt-2">
                         <input ref={messageInput} class="flex-1 p-2 border rounded" placeholder="Type message" />
-                        <button class="px-3 py-2 bg-sky-600 text-white rounded hover:bg-sky-700 active:scale-95 transition transform duration-150 ease-out shadow-sm hover:shadow-md focus:outline-none" onClick={sendMessage}>Send</button>
+                        <button class="px-3 py-2 bg-sky-600 text-white rounded" onClick={sendMessage}>Send</button>
                     </div>
                 </div>
 
