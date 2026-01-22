@@ -146,6 +146,8 @@ export default function App() {
     const [showPermModal, setShowPermModal] = createSignal(false);
     const [permType, setPermType] = createSignal<'audio' | 'video' | null>(null);
     const [permMessage, setPermMessage] = createSignal('');
+    const [connectionStatus, setConnectionStatus] = createSignal<'disconnected' | 'connecting' | 'connected'>('disconnected');
+    const [autoConnecting, setAutoConnecting] = createSignal(false);
 
     let localVideo!: HTMLVideoElement;
     let remoteVideo!: HTMLVideoElement;
@@ -156,6 +158,75 @@ export default function App() {
     function appendLog(s: string) {
         setLog((l) => [...l, s]);
         console.log(s);
+    }
+
+    function createPeerConnectionWithStatus(onTrack: (stream: MediaStream) => void, onDataMessage: (msg: string) => void) {
+        if (pc) return pc;
+        pc = new RTCPeerConnection();
+
+        // Log initial state
+        appendLog(`RTCPeerConnection created - initial state: ${pc.connectionState}, ICE: ${pc.iceConnectionState}, gathering: ${pc.iceGatheringState}`);
+
+        pc.ontrack = (ev) => {
+            appendLog(`ontrack: received track ${ev.track.kind} from ${ev.track.id}, stream count: ${ev.streams.length}`);
+            if (ev.streams && ev.streams[0]) onTrack(ev.streams[0]);
+        };
+
+        pc.ondatachannel = (ev) => {
+            appendLog(`ondatachannel: received data channel ${ev.channel.label}, state: ${ev.channel.readyState}`);
+            dataChannel = ev.channel;
+            dataChannel.onmessage = (e) => onDataMessage(e.data);
+            dataChannel.onopen = () => {
+                setConnectionStatus('connected');
+                appendLog('Data channel open - connection established');
+            };
+            dataChannel.onclose = () => {
+                appendLog('Data channel closed');
+            };
+            dataChannel.onerror = (e) => {
+                appendLog('Data channel error: ' + String(e));
+            };
+        };
+
+        pc.onconnectionstatechange = () => {
+            const state = pc?.connectionState;
+            appendLog(`onconnectionstatechange: ${state}`);
+            if (state === 'connected') {
+                setConnectionStatus('connected');
+            } else if (state === 'disconnected' || state === 'failed') {
+                setConnectionStatus('disconnected');
+            }
+        };
+
+        pc.oniceconnectionstatechange = () => {
+            appendLog(`oniceconnectionstatechange: ${pc?.iceConnectionState}`);
+        };
+
+        pc.onicegatheringstatechange = () => {
+            appendLog(`onicegatheringstatechange: ${pc?.iceGatheringState}`);
+        };
+
+        pc.onsignalingstatechange = () => {
+            appendLog(`onsignalingstatechange: ${pc?.signalingState}`);
+        };
+
+        pc.onicecandidate = (ev) => {
+            if (ev.candidate) {
+                appendLog(`onicecandidate: ${ev.candidate.type} candidate for ${ev.candidate.address || 'unknown'} (${ev.candidate.protocol})`);
+            } else {
+                appendLog('onicecandidate: ICE gathering complete (null candidate)');
+            }
+        };
+
+        pc.onicecandidateerror = (ev) => {
+            appendLog(`onicecandidateerror: ${ev.errorText} (address: ${ev.address}, port: ${ev.port})`);
+        };
+
+        pc.onnegotiationneeded = () => {
+            appendLog('onnegotiationneeded: renegotiation required');
+        };
+
+        return pc;
     }
 
     async function checkPermission(kind: 'audio' | 'video'): Promise<'granted' | 'denied' | 'prompt' | null> {
@@ -174,6 +245,68 @@ export default function App() {
             return 'prompt';
         } catch (e) {
             return null;
+        }
+    }
+
+    async function establishConnection(remoteId: string) {
+        try {
+            setConnectionStatus('connecting');
+            appendLog('Establishing connection for remote: ' + remoteId);
+            
+            // Check if we already have a local SDP
+            const existing = await idbGet('loacl-sdp');
+            if (existing) {
+                setLocalSDP(existing);
+                appendLog('Loaded local SDP from IndexedDB');
+                return;
+            }
+
+            // Create offer if no local SDP exists
+            await createOffer();
+            const s = localSDP();
+            if (s) {
+                await idbSet('loacl-sdp', s);
+                appendLog('Saved local SDP to IndexedDB');
+            } else {
+                appendLog('No local SDP to save');
+            }
+        } catch (e) {
+            setConnectionStatus('disconnected');
+            appendLog('Connection establishment error: ' + String(e));
+        }
+    }
+
+    async function regenerateLocalSDP() {
+        try {
+            // Clear existing peer connection
+            if (pc) {
+                pc.close();
+                pc = null;
+            }
+            if (dataChannel) {
+                dataChannel = null;
+            }
+            
+            // Reset connection status
+            setConnectionStatus('disconnected');
+            
+            // Release existing media stream
+            if (localStream) {
+                for (const t of localStream.getTracks()) t.stop();
+                localStream = null;
+            }
+            
+            // Create new offer with fresh media stream
+            await createOffer();
+            const s = localSDP();
+            if (s) {
+                await idbSet('loacl-sdp', s);
+                appendLog('Regenerated local SDP with fresh media stream');
+            } else {
+                appendLog('Failed to regenerate local SDP');
+            }
+        } catch (e) {
+            appendLog('SDP regeneration error: ' + String(e));
         }
     }
 
@@ -237,10 +370,98 @@ export default function App() {
         }
     }
 
-    function selectRemote(id: string) {
+    async function autoConnectToAllRemotes(remoteList: Array<{ ramdome: string; sdp: string }>) {
+        try {
+            // Load existing local SDP
+            const existing = await idbGet('loacl-sdp');
+            if (existing) {
+                setLocalSDP(existing);
+                appendLog('Loaded existing local SDP for auto-connection');
+            } else {
+                appendLog('No local SDP found, cannot auto-connect');
+                return;
+            }
+
+            // Try to restore connections by checking each remote SDP
+            // We'll attempt to establish connections with any remote SDPs that might be answers to our offer
+            let connectionAttempts = 0;
+            
+            for (const remote of remoteList) {
+                try {
+                    const parsed: RTCSessionDescriptionInit = JSON.parse(remote.sdp);
+                    appendLog(`Evaluating remote ${remote.ramdome}: ${parsed.type}`);
+                    
+                    if (parsed.type === 'answer') {
+                        // This might be an answer to our existing offer
+                        appendLog(`Attempting to restore connection with ${remote.ramdome} (found answer)`);
+                        
+                        // Create fresh peer connection
+                        if (pc) {
+                            pc.close();
+                            pc = null;
+                        }
+                        
+                        setRemoteSDP(remote.sdp);
+                        await applyRemoteSDP();
+                        connectionAttempts++;
+                        appendLog(`Connection attempt ${connectionAttempts} completed for ${remote.ramdome}`);
+                        
+                        // Small delay between attempts
+                        if (connectionAttempts < 3) { // Limit attempts to avoid spam
+                            await new Promise(resolve => setTimeout(resolve, 500));
+                        }
+                    }
+                    
+                } catch (e) {
+                    appendLog(`Failed to evaluate remote ${remote.ramdome}: ${String(e)}`);
+                }
+            }
+            
+            appendLog(`Auto-connection completed. Attempted ${connectionAttempts} connection restorations.`);
+            
+        } catch (e) {
+            appendLog('Auto-connection error: ' + String(e));
+        }
+    }
+
+    async function deleteRemote(id: string) {
+        try {
+            // Close chat panel if this remote is currently selected
+            if (selectedRemote() === id) {
+                setShowChatPanel(false);
+                setSelectedRemote(null);
+                setConnectionStatus('disconnected');
+            }
+
+            // Delete from remote-sdps store
+            await idbRemoteDelete(id);
+            
+            // Delete from messages store
+            await idbMessagesDelete(id);
+            
+            // Remove from chatMap
+            setChatMap((m) => {
+                const newMap = { ...m };
+                delete newMap[id];
+                return newMap;
+            });
+
+            // Reload remote list
+            await loadRemoteList();
+            
+            appendLog(`Deleted remote user: ${id}`);
+        } catch (e) {
+            appendLog('Delete remote error: ' + String(e));
+        }
+    }
+
+    async function selectRemote(id: string) {
         setSelectedRemote(id);
         setShowChatPanel(true);
         setChatMap((m) => ({ ...m, [id]: m[id] ?? [] }));
+        
+        // Establish peer connection when opening chat
+        await establishConnection(id);
     }
 
     async function idbRemoteList(): Promise<Array<{ ramdome: string; sdp: string }>> {
@@ -268,6 +489,28 @@ export default function App() {
         });
     }
 
+    async function idbRemoteDelete(key: string): Promise<void> {
+        const db = await openKVDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('remote-sdps', 'readwrite');
+            const store = tx.objectStore('remote-sdps');
+            const req = store.delete(key);
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    }
+
+    async function idbMessagesDelete(key: string): Promise<void> {
+        const db = await openKVDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('messages', 'readwrite');
+            const store = tx.objectStore('messages');
+            const req = store.delete(key);
+            req.onsuccess = () => resolve();
+            req.onerror = () => reject(req.error);
+        });
+    }
+
     async function loadRemoteList() {
         try {
             const list = await idbRemoteList();
@@ -283,6 +526,14 @@ export default function App() {
                 }
             }));
             setChatMap(map);
+            
+            // Auto-connect to all remote users on page load
+            if (list.length > 0) {
+                setAutoConnecting(true);
+                appendLog(`Auto-connecting to ${list.length} remote users...`);
+                await autoConnectToAllRemotes(list);
+                setAutoConnecting(false);
+            }
         } catch (e) {
             appendLog('Failed to load remote list: ' + String(e));
         }
@@ -299,7 +550,7 @@ export default function App() {
             await applyRemoteSDP();
             appendLog(`Applied remote SDP ${id}`);
             // also select the remote when applied
-            selectRemote(id);
+            await selectRemote(id);
         } catch (e) {
             appendLog('Apply saved remote error: ' + String(e));
         }
@@ -395,46 +646,104 @@ export default function App() {
     }
 
     async function createOffer() {
-        const connection = createPeerConnection(onRemoteTrack, onDataMessage);
+        const connection = createPeerConnectionWithStatus(onRemoteTrack, onDataMessage);
         dataChannel = connection.createDataChannel('chat');
+        appendLog(`createDataChannel: created data channel 'chat', state: ${dataChannel.readyState}`);
+        
         dataChannel.onmessage = (e) => onDataMessage(e.data);
-        dataChannel.onopen = () => appendLog('Data channel open');
+        dataChannel.onopen = () => appendLog('Data channel opened (offerer)');
+        dataChannel.onclose = () => appendLog('Data channel closed (offerer)');
+        dataChannel.onerror = (e) => appendLog('Data channel error (offerer): ' + String(e));
+
+        // Ensure we have media tracks for ICE candidates
+        if (!localStream) {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                appendLog('Acquired media stream for SDP generation');
+            } catch (e) {
+                appendLog('Failed to acquire media stream: ' + String(e));
+                // Continue without media - will generate data channel only SDP
+            }
+        }
 
         if (localStream) {
-            for (const t of localStream.getTracks()) connection.addTrack(t, localStream);
+            for (const t of localStream.getTracks()) {
+                connection.addTrack(t, localStream);
+                appendLog(`addTrack: added ${t.kind} track ${t.id} to connection`);
+            }
         }
 
         const offer = await connection.createOffer();
+        appendLog(`createOffer: offer created, type: ${offer.type}`);
         await connection.setLocalDescription(offer);
+        appendLog('setLocalDescription: offer set as local description');
         await waitForIceGatheringComplete(connection);
         setLocalSDP(JSON.stringify(connection.localDescription));
-        appendLog('Offer created');
+        appendLog('Offer created with media tracks and ICE candidates');
     }
 
     async function createAnswerFromRemote(remote: RTCSessionDescriptionInit) {
-        const connection = createPeerConnection(onRemoteTrack, onDataMessage);
-        if (localStream) {
-            for (const t of localStream.getTracks()) connection.addTrack(t, localStream);
+        const connection = createPeerConnectionWithStatus(onRemoteTrack, onDataMessage);
+        
+        appendLog(`createAnswerFromRemote: processing remote ${remote.type}`);
+        
+        // Ensure we have media tracks for ICE candidates
+        if (!localStream) {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                appendLog('Acquired media stream for answer generation');
+            } catch (e) {
+                appendLog('Failed to acquire media stream for answer: ' + String(e));
+            }
         }
+        
+        if (localStream) {
+            for (const t of localStream.getTracks()) {
+                connection.addTrack(t, localStream);
+                appendLog(`addTrack: added ${t.kind} track ${t.id} to connection (answerer)`);
+            }
+        }
+        
         await connection.setRemoteDescription(remote);
+        appendLog('setRemoteDescription: remote offer set');
         const answer = await connection.createAnswer();
+        appendLog(`createAnswer: answer created, type: ${answer.type}`);
         await connection.setLocalDescription(answer);
+        appendLog('setLocalDescription: answer set as local description');
         await waitForIceGatheringComplete(connection);
         setLocalSDP(JSON.stringify(connection.localDescription));
-        appendLog('Answer created');
+        appendLog('Answer created with media tracks and ICE candidates');
     }
 
     async function applyRemoteSDP() {
         try {
             const parsed: RTCSessionDescriptionInit = JSON.parse(remoteSDP());
+            appendLog(`applyRemoteSDP: parsing remote SDP of type ${parsed.type}`);
+            
             // If we received an offer, create answer
             if (parsed.type === 'offer') {
                 await createAnswerFromRemote(parsed);
             } else {
                 // answer
-                if (!pc) createPeerConnection(onRemoteTrack, onDataMessage);
+                appendLog('applyRemoteSDP: processing remote answer');
+                if (!pc) createPeerConnectionWithStatus(onRemoteTrack, onDataMessage);
+                
+                // Ensure we have media tracks when applying answer
+                if (!localStream) {
+                    try {
+                        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                        appendLog('Acquired media stream before applying remote answer');
+                        for (const t of localStream.getTracks()) {
+                            pc!.addTrack(t, localStream);
+                            appendLog(`addTrack: added ${t.kind} track ${t.id} before applying remote answer`);
+                        }
+                    } catch (e) {
+                        appendLog('Failed to acquire media stream for remote answer: ' + String(e));
+                    }
+                }
+                
                 await pc!.setRemoteDescription(parsed);
-                appendLog('Remote answer applied');
+                appendLog('setRemoteDescription: remote answer applied successfully');
             }
         } catch (e) {
             appendLog('Invalid remote SDP: ' + String(e));
@@ -486,13 +795,24 @@ export default function App() {
 
     function sendChatMessage() {
         const id = selectedRemote();
-        if (!id) return;
+        if (!id) {
+            appendLog('sendChatMessage: no remote selected');
+            return;
+        }
         const txt = chatInput?.value?.trim();
-        if (!txt) return;
+        if (!txt) {
+            appendLog('sendChatMessage: empty message');
+            return;
+        }
+        
         // send over data channel if open
         if (dataChannel && dataChannel.readyState === 'open') {
             dataChannel.send(txt);
+            appendLog(`sendChatMessage: message sent to ${id} (${txt.length} chars)`);
+        } else {
+            appendLog(`sendChatMessage: data channel not ready (state: ${dataChannel?.readyState || 'null'})`);
         }
+        
         const entry = { from: 'me' as const, text: txt, ts: Date.now() };
         setChatMap((m) => ({ ...m, [id]: [...(m[id] ?? []), entry] }));
         // persist
@@ -531,11 +851,33 @@ export default function App() {
 
             
             <div class="mt-16 flex flex-col gap-2 items-start">
+                {autoConnecting() && (
+                    <div class="px-3 py-2 bg-yellow-100 rounded text-sm w-full text-yellow-800 flex items-center gap-2">
+                        <div class="w-4 h-4 border-2 border-yellow-600 border-t-transparent rounded-full animate-spin"></div>
+                        Auto-connecting to users...
+                    </div>
+                )}
                 {remoteList().map((r) => (
-                    <button class="flex items-center gap-3 px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 text-sm w-full justify-start text-left" onClick={() => selectRemote(r.ramdome)}>
-                        <div class="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center text-xs">R</div>
-                        <div class="truncate flex-1 text-left">{r.ramdome}</div>
-                    </button>
+                    <div class="flex items-center gap-2 px-3 py-2 bg-gray-100 rounded hover:bg-gray-200 text-sm w-full justify-between group">
+                        <button class="flex items-center gap-3 flex-1 justify-start text-left" onClick={() => selectRemote(r.ramdome)}>
+                            <div class="w-8 h-8 rounded-full bg-indigo-500 text-white flex items-center justify-center text-xs relative">
+                                R
+                                <div class="absolute -top-1 -right-1 w-3 h-3 rounded-full bg-gray-400"></div>
+                            </div>
+                            <div class="truncate flex-1 text-left">{r.ramdome}</div>
+                        </button>
+                        <button 
+                            class="p-1 rounded hover:bg-red-100 text-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                            onClick={() => deleteRemote(r.ramdome)}
+                            title="Delete user"
+                            aria-label="Delete user"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <polyline points="3,6 5,6 21,6"></polyline>
+                                <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+                            </svg>
+                        </button>
+                    </div>
                 ))}
             </div>
 
@@ -566,10 +908,24 @@ export default function App() {
                 <div class="fixed right-0 top-0 h-full w-96 bg-white shadow-lg z-40 flex flex-col">
                     <div class="flex items-center justify-between p-3 border-b">
                         <div class="flex items-center gap-3">
-                            <div class="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center text-white">R</div>
-                            <div class="font-semibold">{selectedRemote()}</div>
+                            <div class="w-10 h-10 rounded-full bg-indigo-500 flex items-center justify-center text-white relative">
+                                R
+                                <div class={`absolute -top-1 -right-1 w-3 h-3 rounded-full ${
+                                    connectionStatus() === 'connected' ? 'bg-green-500' :
+                                    connectionStatus() === 'connecting' ? 'bg-yellow-500 animate-pulse' :
+                                    'bg-gray-400'
+                                }`}></div>
+                            </div>
+                            <div class="flex flex-col">
+                                <div class="font-semibold">{selectedRemote()}</div>
+                                <div class="text-xs text-gray-500">
+                                    {connectionStatus() === 'connecting' && 'Connecting...'}
+                                    {connectionStatus() === 'connected' && 'Connected'}
+                                    {connectionStatus() === 'disconnected' && 'Disconnected'}
+                                </div>
+                            </div>
                         </div>
-                            <div class="flex items-center gap-2">
+<div class="flex items-center gap-2">
                                 <button class="p-2 rounded hover:bg-gray-100" title="Audio call" aria-label="Audio call" onClick={async ()=>{try{await startAudioCall();}catch(e){appendLog('Audio call error:'+String(e))}}}>
                                     <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                                         <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.86 19.86 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6A19.86 19.86 0 0 1 3.08 4.18 2 2 0 0 1 5 2h3a2 2 0 0 1 2 1.72c.12.86.34 1.69.66 2.47a2 2 0 0 1-.45 2.11L9.91 9.91a16 16 0 0 0 6 6l1.61-1.26a2 2 0 0 1 2.11-.45c.78.32 1.61.54 2.47.66A2 2 0 0 1 22 16.92z" />
@@ -577,6 +933,17 @@ export default function App() {
                                 </button>
                                 <button class="p-2 rounded hover:bg-gray-100" title="Video call" aria-label="Video call" onClick={async ()=>{try{await startVideoCall();}catch(e){appendLog('Video call error:'+String(e))}}}>
                                     <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5 text-gray-700" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="15" height="14" rx="2" ry="2"></rect><polygon points="23 7 16 12 23 17 23 7"></polygon></svg>
+                                </button>
+                                <button 
+                                    class="p-2 rounded hover:bg-red-100 text-red-600" 
+                                    title="Delete user" 
+                                    aria-label="Delete user"
+                                    onClick={() => deleteRemote(selectedRemote()!)}
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <polyline points="3,6 5,6 21,6"></polyline>
+                                        <path d="m19,6v14a2,2 0 0,1 -2,2H7a2,2 0 0,1 -2,-2V6m3,0V4a2,2 0 0,1 2,-2h4a2,2 0 0,1 2,2v2"></path>
+                                    </svg>
                                 </button>
                                 <button class="px-2 py-1 text-sm text-gray-600" onClick={() => setShowChatPanel(false)}>Close</button>
                             </div>
@@ -589,10 +956,16 @@ export default function App() {
                         ))}
                     </div>
                     <div class="p-3 border-t">
-                        <div class="flex gap-2">
-                            <input ref={chatInput} class="flex-1 p-2 border rounded" placeholder="Type a message" onKeyDown={(e:any)=>{ if(e.key==='Enter') sendChatMessage(); }} />
-                            <button class="px-3 py-2 bg-green-600 text-white rounded" onClick={sendChatMessage}>Send</button>
-                        </div>
+                        {connectionStatus() === 'connected' ? (
+                            <div class="flex gap-2">
+                                <input ref={chatInput} class="flex-1 p-2 border rounded" placeholder="Type a message" onKeyDown={(e:any)=>{ if(e.key==='Enter') sendChatMessage(); }} />
+                                <button class="px-3 py-2 bg-green-600 text-white rounded" onClick={sendChatMessage}>Send</button>
+                            </div>
+                        ) : (
+                            <div class="text-center text-gray-500 text-sm py-2">
+                                {connectionStatus() === 'connecting' ? 'Establishing connection...' : 'Connection required to send messages'}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
@@ -628,7 +1001,7 @@ export default function App() {
                         </div>
                         <textarea class="w-full h-64 p-2 border rounded mb-3" value={localSDP()} readonly />
                         <div class="flex justify-end gap-2">
-                            <button class="px-3 py-1 bg-gray-200 rounded" onClick={() => setShowSDPModal(false)}>Close</button>
+                            <button class="px-3 py-1 bg-orange-600 text-white rounded" onClick={regenerateLocalSDP}>Regenerate</button>
                             <button class="px-3 py-1 bg-indigo-600 text-white rounded" onClick={copyLocalSDP}>{copied() ? 'Copied' : 'Copy'}</button>
                         </div>
                     </div>
