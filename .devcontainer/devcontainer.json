@@ -4,8 +4,8 @@
 	"name": "Alpine",
 	// Or use a Dockerfile or Docker Compose file. More info: https://containers.dev/guide/dockerfile
 	// "image": "node:24-alpine"
-	"image": "node:24-bullseye"
-	//"image": "mcr.microsoft.com/devcontainers/javascript-node:24"
+	//"image": "node:24-bullseye"
+	"image": "mcr.microsoft.com/devcontainers/javascript-node:24"
 
 	// Features to add to the dev container. More info: https://containers.dev/features.
 	// "features": {},
