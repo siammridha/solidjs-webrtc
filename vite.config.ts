@@ -6,6 +6,7 @@ import devtools from 'solid-devtools/vite';
 export default defineConfig({
   plugins: [devtools(), solidPlugin(), tailwindcss()],
   server: {
+    host: true,
     port: 3000,
   },
   build: {
