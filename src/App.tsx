@@ -438,82 +438,75 @@ export default function App() {
     return (
         <div class="p-6 max-w-4xl mx-auto relative">
 
-            <div class="absolute top-4 left-4">
-                <button
-                    class="p-2 rounded-full hover:bg-gray-200"
-                    aria-label="Settings"
-                    title="Settings"
-                    onClick={handleSettingsClick}
-                >
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-gray-700" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-                        <path d="M19.43 12.98c.04-.32.07-.66.07-1s-.03-.68-.07-1l2.11-1.65a.5.5 0 00.12-.63l-2-3.46a.5.5 0 00-.6-.22l-2.49 1a7.07 7.07 0 00-1.7-.99l-.38-2.65A.5.5 0 0014.5 2h-5a.5.5 0 00-.5.41l-.38 2.65c-.6.23-1.17.53-1.7.99l-2.49-1a.5.5 0 00-.6.22l-2 3.46a.5.5 0 00.12.63L4.57 11c-.05.33-.07.66-.07 1s.03.68.07 1L2.46 14.65a.5.5 0 00-.12.63l2 3.46c.14.24.44.34.7.22l2.49-1c.52.4 1.08.73 1.7.99l.38 2.65c.05.27.28.41.5.41h5c.22 0 .45-.14.5-.41l.38-2.65c.62-.26 1.18-.59 1.7-.99l2.49 1c.26.11.56.01.7-.22l2-3.46a.5.5 0 00-.12-.63l-2.11-1.65zM12 15.5A3.5 3.5 0 1115.5 12 3.5 3.5 0 0112 15.5z" />
-                    </svg>
-                </button>
-            </div>
+
 
             
             <div class="mt-16 flex flex-col gap-2 items-start">
                 <div class="px-3 py-2 bg-blue-100 rounded text-sm w-full text-blue-800">
-                    Click on a connection to start chatting, or use Settings to add new connections
+                    Click on a connection to start chatting, or click the "Create New Connection" card to add new connections
                 </div>
             </div>
 
             {/* Connection List on Main Page */}
             <div class="mt-6">
                 <h2 class="text-lg font-semibold mb-4">Connections</h2>
-                {storedConnections().length > 0 ? (
-                    <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-                        {storedConnections().map((connection) => (
-                            <div class="p-4 border rounded-lg hover:shadow-md transition-shadow bg-white relative group">
-                                <button
-                                    class="absolute top-2 right-2 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
-                                    onClick={async (e) => {
-                                        e.stopPropagation();
-                                        if (confirm(`Delete connection "${connection.name}"?`)) {
-                                            await deleteConnection(connection.id, appendLog);
-                                            await refreshConnections();
-                                            if (activeChat()?.id === connection.id) {
-                                                closeChat();
-                                            }
-                                            appendLog('Deleted connection: ' + connection.name);
+                <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                    {/* Create New Connection Card */}
+                    <div 
+                        class="p-4 border-2 border-dashed rounded-lg hover:shadow-md transition-shadow bg-gray-50 cursor-pointer flex flex-col items-center justify-center min-h-[120px]"
+                        onClick={handleSettingsClick}
+                    >
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-gray-400 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                        </svg>
+                        <div class="text-sm font-medium text-gray-600">Create New Connection</div>
+                    </div>
+                    
+                    {storedConnections().map((connection) => (
+                        <div class="p-4 border rounded-lg hover:shadow-md transition-shadow bg-white relative group">
+                            <button
+                                class="absolute top-2 right-2 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                                onClick={async (e) => {
+                                    e.stopPropagation();
+                                    if (confirm(`Delete connection "${connection.name}"?`)) {
+                                        await deleteConnection(connection.id, appendLog);
+                                        await refreshConnections();
+                                        if (activeChat()?.id === connection.id) {
+                                            closeChat();
                                         }
-                                    }}
-                                    title="Delete connection"
-                                >
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                    </svg>
-                                </button>
-                                <div 
-                                    class="cursor-pointer"
-                                    onClick={() => openChatConnection(connection)}
-                                >
-                                    <div class="flex items-center justify-between mb-2 pr-10">
-                                        <div class="font-medium text-lg truncate flex-1">{connection.name}</div>
-                                        <div class="text-xs text-gray-500 ml-2">
-                                            {connectionStatus() === 'connected' && activeChat()?.id === connection.id ? (
-                                                <span class="text-green-600">● Active</span>
-                                            ) : (
-                                                <span class="text-gray-400">○</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                    <div class="text-sm text-gray-600">
-                                        {new Date(connection.timestamp).toLocaleString()}
-                                    </div>
-                                    <div class="text-xs text-gray-500 mt-2">
-                                        Click to open chat
+                                        appendLog('Deleted connection: ' + connection.name);
+                                    }
+                                }}
+                                title="Delete connection"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
+                            </button>
+                            <div 
+                                class="cursor-pointer"
+                                onClick={() => openChatConnection(connection)}
+                            >
+                                <div class="flex items-center justify-between mb-2 pr-10">
+                                    <div class="font-medium text-lg truncate flex-1">{connection.name}</div>
+                                    <div class="text-xs text-gray-500 ml-2">
+                                        {connectionStatus() === 'connected' && activeChat()?.id === connection.id ? (
+                                            <span class="text-green-600">● Active</span>
+                                        ) : (
+                                            <span class="text-gray-400">○</span>
+                                        )}
                                     </div>
                                 </div>
+                                <div class="text-sm text-gray-600">
+                                    {new Date(connection.timestamp).toLocaleString()}
+                                </div>
+                                <div class="text-xs text-gray-500 mt-2">
+                                    Click to open chat
+                                </div>
                             </div>
-                        ))}
-                    </div>
-                ) : (
-                    <div class="text-center py-8 text-gray-500">
-                        <div class="text-lg mb-2">No connections yet</div>
-                        <div class="text-sm">Use the Settings button to create your first connection</div>
-                    </div>
-                )}
+                        </div>
+                    ))}
+                </div>
             </div>
 
             {/* Chat Window */}
@@ -588,7 +581,6 @@ export default function App() {
                     top: 'auto', 
                     width: '360px' 
                 }}
-                onPointerDown={(e: any) => onLogsPointerDown(e)}
             >
                 <div class="px-3 py-2 bg-gray-100 border-b cursor-grab flex items-center justify-between" onPointerDown={(e:any)=>onLogsPointerDown(e)}>
                     <div class="text-sm font-medium">Logs</div>
