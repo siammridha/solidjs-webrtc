@@ -141,6 +141,7 @@ export default function App() {
     const [storedConnections, setStoredConnections] = createSignal<StoredConnection[]>([]);
     const [newConnectionName, setNewConnectionName] = createSignal('');
     const [activeChat, setActiveChat] = createSignal<StoredConnection | null>(null);
+    const [showChatWindow, setShowChatWindow] = createSignal(false);
     const [chatMessages, setChatMessages] = createSignal<{ [connectionId: string]: string[] }>({});
     const [messageInput, setMessageInput] = createSignal('');
 
@@ -269,6 +270,7 @@ export default function App() {
 
     function openChatConnection(connection: StoredConnection) {
         setActiveChat(connection);
+        setShowChatWindow(true);
         appendLog('Opening chat with: ' + connection.name);
     }
 
@@ -296,8 +298,11 @@ export default function App() {
     }
 
     function closeChat() {
+        console.log('closeChat called, current activeChat:', activeChat());
         setActiveChat(null);
+        setShowChatWindow(false);
         setMessageInput('');
+        console.log('closeChat finished, new activeChat:', activeChat());
     }
 
 
@@ -518,13 +523,18 @@ export default function App() {
             </div>
 
             {/* Chat Window */}
-            {activeChat() && (
+            {showChatWindow() && activeChat() && (
                 <div class="fixed bottom-4 right-4 w-80 h-96 bg-white border rounded-lg shadow-lg z-30 flex flex-col">
                     <div class="px-4 py-3 border-b flex items-center justify-between bg-gray-50 rounded-t-lg">
                         <div class="font-medium">{activeChat()!.name}</div>
                         <button 
-                            class="text-gray-500 hover:text-gray-700"
-                            onClick={closeChat}
+                            class="text-gray-500 hover:text-gray-700 text-xl leading-none w-6 h-6 flex items-center justify-center"
+                            onClick={(e) => {
+                                console.log('Close button clicked');
+                                e.stopPropagation();
+                                closeChat();
+                                console.log('After closeChat call, activeChat:', activeChat());
+                            }}
                         >
                             ×
                         </button>
