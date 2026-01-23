@@ -6,117 +6,13 @@ type SDPString = string;
 let pc: RTCPeerConnection | null = null;
 let dataChannel: RTCDataChannel | null = null;
 
-// IndexedDB setup
-const DB_NAME = 'WebRTCSDPStore';
-const DB_VERSION = 1;
-const STORE_NAME = 'connections';
-
-interface StoredConnection {
+interface Connection {
     id: string;
     name: string;
-    localSDP: string;
-    remoteSDP: string;
     timestamp: number;
 }
 
-async function openDB(): Promise<IDBDatabase> {
-    return new Promise((resolve, reject) => {
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => resolve(request.result);
-        
-        request.onupgradeneeded = () => {
-            const db = request.result;
-            if (!db.objectStoreNames.contains(STORE_NAME)) {
-                const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
-                store.createIndex('timestamp', 'timestamp');
-            }
-        };
-    });
-}
 
-async function storeConnection(localSDP: string, remoteSDP: string, connectionName: string, logFn: (msg: string) => void): Promise<void> {
-    try {
-        const db = await openDB();
-        const transaction = db.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        
-        const connectionData: StoredConnection = {
-            id: `connection-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            name: connectionName.trim() || `User ${new Date().toLocaleString()}`,
-            localSDP,
-            remoteSDP,
-            timestamp: Date.now()
-        };
-        
-        store.put(connectionData);
-        await new Promise((resolve, reject) => {
-            transaction.oncomplete = resolve;
-            transaction.onerror = reject;
-        });
-        db.close();
-        logFn('Connection stored in IndexedDB: ' + connectionData.name);
-    } catch (error) {
-        logFn('Failed to store connection in IndexedDB: ' + String(error));
-    }
-}
-
-async function getAllStoredConnections(logFn: (msg: string) => void): Promise<StoredConnection[]> {
-    try {
-        const db = await openDB();
-        const transaction = db.transaction([STORE_NAME], 'readonly');
-        const store = transaction.objectStore(STORE_NAME);
-        
-        const result = await new Promise<StoredConnection[]>((resolve, reject) => {
-            const connections: StoredConnection[] = [];
-            const request = store.openCursor();
-            
-            request.onsuccess = (e) => {
-                const cursor = (e.target as IDBRequest).result;
-                if (cursor) {
-                    connections.push(cursor.value);
-                    cursor.continue();
-                } else {
-                    resolve(connections);
-                }
-            };
-            
-            request.onerror = () => reject(request.error);
-        });
-        
-        db.close();
-        
-        // Sort by timestamp (newest first)
-        result.sort((a, b) => b.timestamp - a.timestamp);
-        
-        if (result.length > 0) {
-            logFn(`Retrieved ${result.length} stored connections from IndexedDB`);
-        }
-        return result;
-    } catch (error) {
-        logFn('Failed to retrieve connections from IndexedDB: ' + String(error));
-        return [];
-    }
-}
-
-async function deleteConnection(connectionId: string, logFn: (msg: string) => void): Promise<void> {
-    try {
-        const db = await openDB();
-        const transaction = db.transaction([STORE_NAME], 'readwrite');
-        const store = transaction.objectStore(STORE_NAME);
-        
-        store.delete(connectionId);
-        await new Promise((resolve, reject) => {
-            transaction.oncomplete = resolve;
-            transaction.onerror = reject;
-        });
-        db.close();
-        logFn('Connection deleted from IndexedDB');
-    } catch (error) {
-        logFn('Failed to delete connection from IndexedDB: ' + String(error));
-    }
-}
 
 async function waitForIceGatheringComplete(pc: RTCPeerConnection) {
     if (pc.iceGatheringState === 'complete') return;
@@ -138,9 +34,10 @@ export default function App() {
     const [copied, setCopied] = createSignal(false);
     const [log, setLog] = createSignal<string[]>([]);
     const [connectionStatus, setConnectionStatus] = createSignal<'disconnected' | 'connecting' | 'connected'>('disconnected');
-    const [storedConnections, setStoredConnections] = createSignal<StoredConnection[]>([]);
+const [activeConnectionId, setActiveConnectionId] = createSignal<string | null>(null);
+    const [storedConnections, setStoredConnections] = createSignal<Connection[]>([]);
     const [newConnectionName, setNewConnectionName] = createSignal('');
-    const [activeChat, setActiveChat] = createSignal<StoredConnection | null>(null);
+    const [activeChat, setActiveChat] = createSignal<Connection | null>(null);
     const [showChatWindow, setShowChatWindow] = createSignal(false);
     const [chatMessages, setChatMessages] = createSignal<{ [connectionId: string]: string[] }>({});
     const [messageInput, setMessageInput] = createSignal('');
@@ -184,19 +81,23 @@ export default function App() {
                 setShowSDPModal(false);
                 setConnectionStatus('connected');
                 
-                // Store connection in IndexedDB and clear state
-                const local = localSDP();
-                const remote = remoteSDP();
-                if (local && remote) {
-                    await storeConnection(local, remote, newConnectionName(), appendLog);
-                    setLocalSDP('');
-                    setRemoteSDP('');
-                    setNewConnectionName('');
-                    await refreshConnections();
-                    appendLog('SDP state cleared after storing in IndexedDB');
-                }
+                // Create connection in memory and clear state
+                const connectionName = newConnectionName().trim() || `User ${new Date().toLocaleString()}`;
+                const newConnection: Connection = {
+                    id: `connection-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+                    name: connectionName,
+                    timestamp: Date.now()
+                };
+                
+                setStoredConnections(prev => [newConnection, ...prev]);
+                setActiveConnectionId(newConnection.id);
+                setLocalSDP('');
+                setRemoteSDP('');
+                setNewConnectionName('');
+                appendLog('Connection established and added to list: ' + newConnection.name);
             } else if (state === 'disconnected' || state === 'failed') {
                 setConnectionStatus('disconnected');
+                setActiveConnectionId(null);
             }
         };
 
@@ -268,7 +169,7 @@ export default function App() {
         appendLog('Received message: ' + msg);
     }
 
-    function openChatConnection(connection: StoredConnection) {
+    function openChatConnection(connection: Connection) {
         setActiveChat(connection);
         setShowChatWindow(true);
         appendLog('Opening chat with: ' + connection.name);
@@ -369,14 +270,9 @@ export default function App() {
         if (pc) pc.close();
     });
 
-    // Load stored connections on mount and refresh after changes
-    const refreshConnections = async () => {
-        const connections = await getAllStoredConnections(appendLog);
-        setStoredConnections(connections);
-    };
-
     onMount(() => {
-        refreshConnections();
+        // No connections to load from storage since we're using in-memory only
+        appendLog('Application ready - connections will be created when WebRTC connections are established');
     });
 
     // Auto-scroll logs and chat to bottom when new content is added
@@ -479,11 +375,10 @@ export default function App() {
                         <div class="p-4 border rounded-lg hover:shadow-md transition-shadow bg-white relative group">
                             <button
                                 class="absolute top-2 right-2 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
-                                onClick={async (e) => {
+                                onClick={(e) => {
                                     e.stopPropagation();
                                     if (confirm(`Delete connection "${connection.name}"?`)) {
-                                        await deleteConnection(connection.id, appendLog);
-                                        await refreshConnections();
+                                        setStoredConnections(prev => prev.filter(c => c.id !== connection.id));
                                         if (activeChat()?.id === connection.id) {
                                             closeChat();
                                         }
@@ -503,7 +398,7 @@ export default function App() {
                                 <div class="flex items-center justify-between mb-2 pr-10">
                                     <div class="font-medium text-lg truncate flex-1">{connection.name}</div>
                                     <div class="text-xs text-gray-500 ml-2">
-                                        {connectionStatus() === 'connected' ? (
+                                        {activeConnectionId() === connection.id ? (
                                             <span class="text-green-600">● Connected</span>
                                         ) : connectionStatus() === 'connecting' ? (
                                             <span class="text-yellow-600">● Connecting</span>
