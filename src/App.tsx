@@ -6,6 +6,80 @@ type SDPString = string;
 let pc: RTCPeerConnection | null = null;
 let dataChannel: RTCDataChannel | null = null;
 
+// IndexedDB setup
+const DB_NAME = 'WebRTCSDPStore';
+const DB_VERSION = 1;
+const STORE_NAME = 'sdps';
+
+async function openDB(): Promise<IDBDatabase> {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME, DB_VERSION);
+        
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => resolve(request.result);
+        
+        request.onupgradeneeded = () => {
+            const db = request.result;
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+            }
+        };
+    });
+}
+
+async function storeSDP(localSDP: string, remoteSDP: string, logFn: (msg: string) => void): Promise<void> {
+    try {
+        const db = await openDB();
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        
+        const sdpData = {
+            id: 'current-connection',
+            localSDP,
+            remoteSDP,
+            timestamp: Date.now()
+        };
+        
+        store.put(sdpData);
+        await new Promise((resolve, reject) => {
+            transaction.oncomplete = resolve;
+            transaction.onerror = reject;
+        });
+        db.close();
+        logFn('SDPs stored in IndexedDB');
+    } catch (error) {
+        logFn('Failed to store SDPs in IndexedDB: ' + String(error));
+    }
+}
+
+async function getStoredSDPs(logFn: (msg: string) => void): Promise<{ localSDP: string; remoteSDP: string } | null> {
+    try {
+        const db = await openDB();
+        const transaction = db.transaction([STORE_NAME], 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        
+        const result = await new Promise<IDBRequest>((resolve) => {
+            const request = store.get('current-connection');
+            request.onsuccess = () => resolve(request);
+            request.onerror = () => resolve(request);
+        }) as IDBRequest;
+        
+        db.close();
+        
+        if (result.result) {
+            logFn('Retrieved stored SDPs from IndexedDB');
+            return {
+                localSDP: result.result.localSDP,
+                remoteSDP: result.result.remoteSDP
+            };
+        }
+        return null;
+    } catch (error) {
+        logFn('Failed to retrieve SDPs from IndexedDB: ' + String(error));
+        return null;
+    }
+}
+
 async function waitForIceGatheringComplete(pc: RTCPeerConnection) {
     if (pc.iceGatheringState === 'complete') return;
     await new Promise((resolve) => {
@@ -25,34 +99,25 @@ export default function App() {
     const [showSDPModal, setShowSDPModal] = createSignal(false);
     const [copied, setCopied] = createSignal(false);
     const [log, setLog] = createSignal<string[]>([]);
-
-    const [showPermModal, setShowPermModal] = createSignal(false);
-    const [permType, setPermType] = createSignal<'audio' | 'video' | null>(null);
-    const [permMessage, setPermMessage] = createSignal('');
     const [connectionStatus, setConnectionStatus] = createSignal<'disconnected' | 'connecting' | 'connected'>('disconnected');
+    const [storedSDPs, setStoredSDPs] = createSignal<{ localSDP: string; remoteSDP: string } | null>(null);
 
 
-    let localVideo!: HTMLVideoElement;
-    let remoteVideo!: HTMLVideoElement;
 
-    let localStream: MediaStream | null = null;
 
     function appendLog(s: string) {
         setLog((l) => [...l, s]);
         console.log(s);
     }
 
-    function createPeerConnectionWithStatus(onTrack: (stream: MediaStream) => void, onDataMessage: (msg: string) => void) {
+    function createPeerConnectionWithStatus(onDataMessage: (msg: string) => void) {
         if (pc) return pc;
         pc = new RTCPeerConnection();
 
         // Log initial state
         appendLog(`RTCPeerConnection created - initial state: ${pc.connectionState}, ICE: ${pc.iceConnectionState}, gathering: ${pc.iceGatheringState}`);
 
-        pc.ontrack = (ev) => {
-            appendLog(`ontrack: received track ${ev.track.kind} from ${ev.track.id}, stream count: ${ev.streams.length}`);
-            if (ev.streams && ev.streams[0]) onTrack(ev.streams[0]);
-        };
+
 
         pc.ondatachannel = (ev) => {
             appendLog(`ondatachannel: received data channel ${ev.channel.label}, state: ${ev.channel.readyState}`);
@@ -69,12 +134,22 @@ export default function App() {
             };
         };
 
-        pc.onconnectionstatechange = () => {
+        pc.onconnectionstatechange = async () => {
             const state = pc?.connectionState;
             appendLog(`onconnectionstatechange: ${state}`);
             if (state === 'connected') {
                 setShowSDPModal(false);
                 setConnectionStatus('connected');
+                
+                // Store SDPs in IndexedDB and clear state
+                const local = localSDP();
+                const remote = remoteSDP();
+                if (local && remote) {
+                    await storeSDP(local, remote, appendLog);
+                    setLocalSDP('');
+                    setRemoteSDP('');
+                    appendLog('SDP state cleared after storing in IndexedDB');
+                }
             } else if (state === 'disconnected' || state === 'failed') {
                 setConnectionStatus('disconnected');
             }
@@ -111,24 +186,7 @@ export default function App() {
         return pc;
     }
 
-    async function checkPermission(kind: 'audio' | 'video'): Promise<'granted' | 'denied' | 'prompt' | null> {
-        try {
-            const permApi = (navigator as any).permissions;
-            if (!permApi || !permApi.query) return null;
-            if (kind === 'audio') {
-                const res = await permApi.query({ name: 'microphone' } as any);
-                return res.state as 'granted' | 'denied' | 'prompt';
-            }
-            // for video check both camera and microphone where available
-            const cam = await permApi.query({ name: 'camera' } as any).catch(() => null);
-            const mic = await permApi.query({ name: 'microphone' } as any).catch(() => null);
-            if ((cam && cam.state === 'denied') || (mic && mic.state === 'denied')) return 'denied';
-            if ((cam && cam.state === 'granted') && (mic && mic.state === 'granted')) return 'granted';
-            return 'prompt';
-        } catch (e) {
-            return null;
-        }
-    }
+
 
 
 
@@ -152,94 +210,17 @@ export default function App() {
         }
     }
 
-    function onRemoteTrack(stream: MediaStream) {
-        if (remoteVideo) {
-            remoteVideo.srcObject = stream;
-        }
-        appendLog('Remote track received');
-    }
+
 
     function onDataMessage(msg: string) {
         // Chat functionality simplified - just log incoming messages
         appendLog('Received message: ' + msg);
     }
 
-    async function startVideoCall() {
-        try {
-            const state = await checkPermission('video');
-            if (state === 'denied') {
-                setPermType('video');
-                setPermMessage('Camera and/or microphone permission is blocked in your browser. Please enable access in site settings.');
-                setShowPermModal(true);
-                appendLog('Permission state denied for video, showing modal');
-                return;
-            }
-            let timer: any = setTimeout(() => {
-                if (!localStream) {
-                    setPermType('video');
-                    setPermMessage('Unable to acquire camera/microphone — permission may be blocked.');
-                    setShowPermModal(true);
-                    appendLog('Permission modal fallback triggered for video');
-                }
-            }, 1200);
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                if (localVideo) {
-                    localVideo.srcObject = localStream;
-                    localVideo.muted = true;
-                }
-                appendLog('Video call started (local stream acquired)');
-            } finally {
-                clearTimeout(timer);
-            }
-        } catch (e) {
-            appendLog('startVideoCall error: ' + String(e));
-            const err = e as any;
-            setPermType('video');
-            setPermMessage('Camera and microphone access was denied or failed: ' + (err?.message ?? String(e)));
-            appendLog('Showing permission modal: ' + (err?.message ?? String(e)));
-            setShowPermModal(true);
-            return;
-        }
-    }
 
-    async function startAudioCall() {
-        try {
-            const state = await checkPermission('audio');
-            if (state === 'denied') {
-                setPermType('audio');
-                setPermMessage('Microphone permission is blocked in your browser. Please enable access in site settings.');
-                setShowPermModal(true);
-                appendLog('Permission state denied for audio, showing modal');
-                return;
-            }
-            let timer: any = setTimeout(() => {
-                if (!localStream) {
-                    setPermType('audio');
-                    setPermMessage('Unable to acquire microphone — permission may be blocked.');
-                    setShowPermModal(true);
-                    appendLog('Permission modal fallback triggered for audio');
-                }
-            }, 1200);
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-                appendLog('Audio call started (local audio acquired)');
-            } finally {
-                clearTimeout(timer);
-            }
-        } catch (e) {
-            appendLog('startAudioCall error: ' + String(e));
-            const err = e as any;
-            setPermType('audio');
-            setPermMessage('Microphone access was denied or failed: ' + (err?.message ?? String(e)));
-            appendLog('Showing permission modal: ' + (err?.message ?? String(e)));
-            setShowPermModal(true);
-            return;
-        }
-    }
 
     async function createOffer() {
-        const connection = createPeerConnectionWithStatus(onRemoteTrack, onDataMessage);
+        const connection = createPeerConnectionWithStatus(onDataMessage);
         dataChannel = connection.createDataChannel('chat');
         appendLog(`createDataChannel: created data channel 'chat', state: ${dataChannel.readyState}`);
         
@@ -248,54 +229,19 @@ export default function App() {
         dataChannel.onclose = () => appendLog('Data channel closed (offerer)');
         dataChannel.onerror = (e) => appendLog('Data channel error (offerer): ' + String(e));
 
-        // Ensure we have media tracks for ICE candidates
-        if (!localStream) {
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                appendLog('Acquired media stream for SDP generation');
-            } catch (e) {
-                appendLog('Failed to acquire media stream: ' + String(e));
-                // Continue without media - will generate data channel only SDP
-            }
-        }
-
-        if (localStream) {
-            for (const t of localStream.getTracks()) {
-                connection.addTrack(t, localStream);
-                appendLog(`addTrack: added ${t.kind} track ${t.id} to connection`);
-            }
-        }
-
         const offer = await connection.createOffer();
         appendLog(`createOffer: offer created, type: ${offer.type}`);
         await connection.setLocalDescription(offer);
         appendLog('setLocalDescription: offer set as local description');
         await waitForIceGatheringComplete(connection);
         setLocalSDP(JSON.stringify(connection.localDescription));
-        appendLog('Offer created with media tracks and ICE candidates');
+        appendLog('Offer created with data channel and ICE candidates');
     }
 
     async function createAnswerFromRemote(remote: RTCSessionDescriptionInit) {
-        const connection = createPeerConnectionWithStatus(onRemoteTrack, onDataMessage);
+        const connection = createPeerConnectionWithStatus(onDataMessage);
         
         appendLog(`createAnswerFromRemote: processing remote ${remote.type}`);
-        
-        // Ensure we have media tracks for ICE candidates
-        if (!localStream) {
-            try {
-                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                appendLog('Acquired media stream for answer generation');
-            } catch (e) {
-                appendLog('Failed to acquire media stream for answer: ' + String(e));
-            }
-        }
-        
-        if (localStream) {
-            for (const t of localStream.getTracks()) {
-                connection.addTrack(t, localStream);
-                appendLog(`addTrack: added ${t.kind} track ${t.id} to connection (answerer)`);
-            }
-        }
         
         await connection.setRemoteDescription(remote);
         appendLog('setRemoteDescription: remote offer set');
@@ -305,7 +251,7 @@ export default function App() {
         appendLog('setLocalDescription: answer set as local description');
         await waitForIceGatheringComplete(connection);
         setLocalSDP(JSON.stringify(connection.localDescription));
-        appendLog('Answer created with media tracks and ICE candidates');
+        appendLog('Answer created with data channel and ICE candidates');
     }
 
     async function applyRemoteSDP() {
@@ -319,21 +265,7 @@ export default function App() {
             } else {
                 // answer
                 appendLog('applyRemoteSDP: processing remote answer');
-                if (!pc) createPeerConnectionWithStatus(onRemoteTrack, onDataMessage);
-                
-                // Ensure we have media tracks when applying answer
-                if (!localStream) {
-                    try {
-                        localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                        appendLog('Acquired media stream before applying remote answer');
-                        for (const t of localStream.getTracks()) {
-                            pc!.addTrack(t, localStream);
-                            appendLog(`addTrack: added ${t.kind} track ${t.id} before applying remote answer`);
-                        }
-                    } catch (e) {
-                        appendLog('Failed to acquire media stream for remote answer: ' + String(e));
-                    }
-                }
+                if (!pc) createPeerConnectionWithStatus(onDataMessage);
                 
                 await pc!.setRemoteDescription(parsed);
                 appendLog('setRemoteDescription: remote answer applied successfully');
@@ -346,10 +278,13 @@ export default function App() {
     // sendMessage removed (chat UI removed)
 
     onCleanup(() => {
-        if (localStream) {
-            for (const t of localStream.getTracks()) t.stop();
-        }
         if (pc) pc.close();
+    });
+
+    // Load stored SDPs on mount
+    onMount(async () => {
+        const stored = await getStoredSDPs(appendLog);
+        setStoredSDPs(stored);
     });
 
     // Auto-scroll logs to bottom when new logs are added
@@ -439,30 +374,7 @@ export default function App() {
                     ))}
                 </div>
             </div>
-            {/* Chat panel removed - remote users managed via SDP modal */}
-            {showPermModal() && (
-                <div class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50" onClick={() => setShowPermModal(false)}>
-                    <div class="bg-white rounded p-4 w-full max-w-md mx-4" onClick={(e) => (e.stopPropagation(), false)}>
-                        <div class="mb-3">
-                            <h3 class="text-lg font-semibold">Permission required</h3>
-                            <p class="text-sm text-gray-700 mt-2">{permMessage()}</p>
-                        </div>
-                        <div class="flex justify-end gap-2">
-                            <button class="px-3 py-1 bg-gray-200 rounded" onClick={() => setShowPermModal(false)}>Close</button>
-                            <button class="px-3 py-1 bg-indigo-600 text-white rounded" onClick={async () => {
-                                setShowPermModal(false);
-                                const t = permType();
-                                try {
-                                    if (t === 'video') await startVideoCall();
-                                    else if (t === 'audio') await startAudioCall();
-                                } catch (e) {
-                                    appendLog('Retry failed: ' + String(e));
-                                }
-                            }}>Retry</button>
-                        </div>
-                    </div>
-                </div>
-            )}
+
             {showSDPModal() && (
                 <div class="fixed inset-0 z-40 flex items-center justify-center" style={{ 'background-color': 'rgba(0, 0, 0, 0.2)' }} onClick={() => setShowSDPModal(false)}>
                     <div class="bg-white rounded p-4 w-full max-w-2xl mx-4" onClick={(e) => (e.stopPropagation(), false)}>
@@ -494,6 +406,31 @@ export default function App() {
                                 <button class="px-3 py-1 bg-indigo-600 text-white rounded self-start" onClick={copyLocalSDP}>{copied() ? 'Copied' : 'Copy'}</button>
                             </div>
                         </div>
+
+                        {/* Stored SDPs Display */}
+                        {storedSDPs() && (
+                            <div class="mb-4 p-3 bg-gray-50 rounded">
+                                <div class="flex items-center justify-between mb-2">
+                                    <h3 class="text-sm font-medium">Stored Connection</h3>
+                                    <button 
+                                        class="px-2 py-1 bg-blue-600 text-white text-xs rounded"
+                                        onClick={() => {
+                                            const stored = storedSDPs();
+                                            if (stored) {
+                                                setLocalSDP(stored.localSDP);
+                                                setRemoteSDP(stored.remoteSDP);
+                                                appendLog('Loaded stored SDPs into form');
+                                            }
+                                        }}
+                                    >
+                                        Load Stored SDPs
+                                    </button>
+                                </div>
+                                <div class="text-xs text-gray-600">
+                                    Stored: {new Date().toLocaleString()} (Last connection)
+                                </div>
+                            </div>
+                        )}
 
                         {/* Remote SDP Input */}
                         <div class="mb-4">
