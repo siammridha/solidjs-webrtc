@@ -399,7 +399,7 @@ export default function App() {
         }
     });
 
-    const [logsPos, setLogsPos] = createSignal<{ x: number; y: number }>({ x: 40, y: 40 });
+    const [logsPos, setLogsPos] = createSignal<{ x: number; y: number }>({ x: window.innerWidth - 400, y: 40 });
     const [dragging, setDragging] = createSignal(false);
     let dragOffset = { x: 0, y: 0 };
 
@@ -407,17 +407,25 @@ export default function App() {
         setDragging(true);
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         dragOffset.x = e.clientX - rect.left;
-        dragOffset.y = window.innerHeight - e.clientY - rect.height;
+        dragOffset.y = e.clientY - rect.top;
         try { (e.target as Element).setPointerCapture?.((e as any).pointerId); } catch {}
         e.stopPropagation();
     }
 
     function onLogsPointerMove(e: PointerEvent) {
         if (!dragging()) return;
-        setLogsPos({ 
-            x: e.clientX - dragOffset.x, 
-            y: window.innerHeight - e.clientY - dragOffset.y 
-        });
+        
+        // Calculate right position (distance from right edge)
+        const maxX = window.innerWidth - 360; // Maximum x from left
+        const minX = 0;
+        const newX = Math.min(maxX, Math.max(minX, e.clientX - dragOffset.x));
+        
+        // Calculate bottom position (distance from bottom edge)
+        const maxBottom = window.innerHeight - 100; // Minimum distance from top
+        const minBottom = 0; // Minimum distance from bottom
+        const newBottom = Math.min(maxBottom, Math.max(minBottom, window.innerHeight - (e.clientY - dragOffset.y + 320)));
+        
+        setLogsPos({ x: newX, y: newBottom });
     }
 
     function onLogsPointerUp(e: PointerEvent) {
@@ -576,7 +584,7 @@ export default function App() {
             <div
                 class="fixed bg-white border rounded shadow z-50"
                 style={{ 
-                    left: logsPos().x + 'px', 
+                    right: (window.innerWidth - logsPos().x - 360) + 'px',
                     bottom: logsPos().y + 'px', 
                     top: 'auto', 
                     width: '360px' 
@@ -585,7 +593,7 @@ export default function App() {
                 <div class="px-3 py-2 bg-gray-100 border-b cursor-grab flex items-center justify-between" onPointerDown={(e:any)=>onLogsPointerDown(e)}>
                     <div class="text-sm font-medium">Logs</div>
                     <div class="text-xs text-gray-600">
-                        <button class="px-2 py-1" onClick={() => setLogsPos({ x: 40, y: 40 })}>Reset</button>
+                        <button class="px-2 py-1" onClick={() => setLogsPos({ x: window.innerWidth - 400, y: 40 })}>Reset</button>
                     </div>
                 </div>
                 <div class="h-80 p-2 overflow-auto" id="logs-container">
