@@ -9,7 +9,15 @@ let dataChannel: RTCDataChannel | null = null;
 // IndexedDB setup
 const DB_NAME = 'WebRTCSDPStore';
 const DB_VERSION = 1;
-const STORE_NAME = 'sdps';
+const STORE_NAME = 'connections';
+
+interface StoredConnection {
+    id: string;
+    name: string;
+    localSDP: string;
+    remoteSDP: string;
+    timestamp: number;
+}
 
 async function openDB(): Promise<IDBDatabase> {
     return new Promise((resolve, reject) => {
@@ -21,62 +29,92 @@ async function openDB(): Promise<IDBDatabase> {
         request.onupgradeneeded = () => {
             const db = request.result;
             if (!db.objectStoreNames.contains(STORE_NAME)) {
-                db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                const store = db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                store.createIndex('timestamp', 'timestamp');
             }
         };
     });
 }
 
-async function storeSDP(localSDP: string, remoteSDP: string, logFn: (msg: string) => void): Promise<void> {
+async function storeConnection(localSDP: string, remoteSDP: string, connectionName: string, logFn: (msg: string) => void): Promise<void> {
     try {
         const db = await openDB();
         const transaction = db.transaction([STORE_NAME], 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
         
-        const sdpData = {
-            id: 'current-connection',
+        const connectionData: StoredConnection = {
+            id: `connection-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            name: connectionName.trim() || `User ${new Date().toLocaleString()}`,
             localSDP,
             remoteSDP,
             timestamp: Date.now()
         };
         
-        store.put(sdpData);
+        store.put(connectionData);
         await new Promise((resolve, reject) => {
             transaction.oncomplete = resolve;
             transaction.onerror = reject;
         });
         db.close();
-        logFn('SDPs stored in IndexedDB');
+        logFn('Connection stored in IndexedDB: ' + connectionData.name);
     } catch (error) {
-        logFn('Failed to store SDPs in IndexedDB: ' + String(error));
+        logFn('Failed to store connection in IndexedDB: ' + String(error));
     }
 }
 
-async function getStoredSDPs(logFn: (msg: string) => void): Promise<{ localSDP: string; remoteSDP: string } | null> {
+async function getAllStoredConnections(logFn: (msg: string) => void): Promise<StoredConnection[]> {
     try {
         const db = await openDB();
         const transaction = db.transaction([STORE_NAME], 'readonly');
         const store = transaction.objectStore(STORE_NAME);
         
-        const result = await new Promise<IDBRequest>((resolve) => {
-            const request = store.get('current-connection');
-            request.onsuccess = () => resolve(request);
-            request.onerror = () => resolve(request);
-        }) as IDBRequest;
+        const result = await new Promise<StoredConnection[]>((resolve, reject) => {
+            const connections: StoredConnection[] = [];
+            const request = store.openCursor();
+            
+            request.onsuccess = (e) => {
+                const cursor = (e.target as IDBRequest).result;
+                if (cursor) {
+                    connections.push(cursor.value);
+                    cursor.continue();
+                } else {
+                    resolve(connections);
+                }
+            };
+            
+            request.onerror = () => reject(request.error);
+        });
         
         db.close();
         
-        if (result.result) {
-            logFn('Retrieved stored SDPs from IndexedDB');
-            return {
-                localSDP: result.result.localSDP,
-                remoteSDP: result.result.remoteSDP
-            };
+        // Sort by timestamp (newest first)
+        result.sort((a, b) => b.timestamp - a.timestamp);
+        
+        if (result.length > 0) {
+            logFn(`Retrieved ${result.length} stored connections from IndexedDB`);
         }
-        return null;
+        return result;
     } catch (error) {
-        logFn('Failed to retrieve SDPs from IndexedDB: ' + String(error));
-        return null;
+        logFn('Failed to retrieve connections from IndexedDB: ' + String(error));
+        return [];
+    }
+}
+
+async function deleteConnection(connectionId: string, logFn: (msg: string) => void): Promise<void> {
+    try {
+        const db = await openDB();
+        const transaction = db.transaction([STORE_NAME], 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        
+        store.delete(connectionId);
+        await new Promise((resolve, reject) => {
+            transaction.oncomplete = resolve;
+            transaction.onerror = reject;
+        });
+        db.close();
+        logFn('Connection deleted from IndexedDB');
+    } catch (error) {
+        logFn('Failed to delete connection from IndexedDB: ' + String(error));
     }
 }
 
@@ -100,7 +138,11 @@ export default function App() {
     const [copied, setCopied] = createSignal(false);
     const [log, setLog] = createSignal<string[]>([]);
     const [connectionStatus, setConnectionStatus] = createSignal<'disconnected' | 'connecting' | 'connected'>('disconnected');
-    const [storedSDPs, setStoredSDPs] = createSignal<{ localSDP: string; remoteSDP: string } | null>(null);
+    const [storedConnections, setStoredConnections] = createSignal<StoredConnection[]>([]);
+    const [newConnectionName, setNewConnectionName] = createSignal('');
+    const [activeChat, setActiveChat] = createSignal<StoredConnection | null>(null);
+    const [chatMessages, setChatMessages] = createSignal<{ [connectionId: string]: string[] }>({});
+    const [messageInput, setMessageInput] = createSignal('');
 
 
 
@@ -141,13 +183,15 @@ export default function App() {
                 setShowSDPModal(false);
                 setConnectionStatus('connected');
                 
-                // Store SDPs in IndexedDB and clear state
+                // Store connection in IndexedDB and clear state
                 const local = localSDP();
                 const remote = remoteSDP();
                 if (local && remote) {
-                    await storeSDP(local, remote, appendLog);
+                    await storeConnection(local, remote, newConnectionName(), appendLog);
                     setLocalSDP('');
                     setRemoteSDP('');
+                    setNewConnectionName('');
+                    await refreshConnections();
                     appendLog('SDP state cleared after storing in IndexedDB');
                 }
             } else if (state === 'disconnected' || state === 'failed') {
@@ -213,8 +257,47 @@ export default function App() {
 
 
     function onDataMessage(msg: string) {
-        // Chat functionality simplified - just log incoming messages
+        const active = activeChat();
+        if (active) {
+            setChatMessages(prev => ({
+                ...prev,
+                [active.id]: [...(prev[active.id] || []), `${active.name}: ${msg}`]
+            }));
+        }
         appendLog('Received message: ' + msg);
+    }
+
+    function openChatConnection(connection: StoredConnection) {
+        setActiveChat(connection);
+        appendLog('Opening chat with: ' + connection.name);
+    }
+
+    async function sendMessage() {
+        const msg = messageInput().trim();
+        if (!msg || !dataChannel || dataChannel.readyState !== 'open') {
+            appendLog('Cannot send message - data channel not ready');
+            return;
+        }
+
+        const active = activeChat();
+        if (!active) return;
+
+        try {
+            dataChannel.send(msg);
+            setChatMessages(prev => ({
+                ...prev,
+                [active.id]: [...(prev[active.id] || []), `You: ${msg}`]
+            }));
+            setMessageInput('');
+            appendLog('Message sent: ' + msg);
+        } catch (error) {
+            appendLog('Failed to send message: ' + String(error));
+        }
+    }
+
+    function closeChat() {
+        setActiveChat(null);
+        setMessageInput('');
     }
 
 
@@ -281,13 +364,17 @@ export default function App() {
         if (pc) pc.close();
     });
 
-    // Load stored SDPs on mount
-    onMount(async () => {
-        const stored = await getStoredSDPs(appendLog);
-        setStoredSDPs(stored);
+    // Load stored connections on mount and refresh after changes
+    const refreshConnections = async () => {
+        const connections = await getAllStoredConnections(appendLog);
+        setStoredConnections(connections);
+    };
+
+    onMount(() => {
+        refreshConnections();
     });
 
-    // Auto-scroll logs to bottom when new logs are added
+    // Auto-scroll logs and chat to bottom when new content is added
     createEffect(() => {
         const logsCount = log().length;
         if (logsCount > 0) {
@@ -300,21 +387,37 @@ export default function App() {
         }
     });
 
-    const [logsPos, setLogsPos] = createSignal<{ x: number; y: number }>({ x: 40, y: 120 });
+    createEffect(() => {
+        const active = activeChat();
+        if (active) {
+            setTimeout(() => {
+                const chatContainer = document.getElementById('chat-messages');
+                if (chatContainer) {
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }
+            }, 0);
+        }
+    });
+
+    const [logsPos, setLogsPos] = createSignal<{ x: number; y: number }>({ x: 40, y: 40 });
     const [dragging, setDragging] = createSignal(false);
     let dragOffset = { x: 0, y: 0 };
 
     function onLogsPointerDown(e: PointerEvent) {
         setDragging(true);
-        dragOffset.x = e.clientX - logsPos().x;
-        dragOffset.y = e.clientY - logsPos().y;
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        dragOffset.x = e.clientX - rect.left;
+        dragOffset.y = window.innerHeight - e.clientY - rect.height;
         try { (e.target as Element).setPointerCapture?.((e as any).pointerId); } catch {}
         e.stopPropagation();
     }
 
     function onLogsPointerMove(e: PointerEvent) {
         if (!dragging()) return;
-        setLogsPos({ x: e.clientX - dragOffset.x, y: e.clientY - dragOffset.y });
+        setLogsPos({ 
+            x: e.clientX - dragOffset.x, 
+            y: window.innerHeight - e.clientY - dragOffset.y 
+        });
     }
 
     function onLogsPointerUp(e: PointerEvent) {
@@ -351,21 +454,146 @@ export default function App() {
             
             <div class="mt-16 flex flex-col gap-2 items-start">
                 <div class="px-3 py-2 bg-blue-100 rounded text-sm w-full text-blue-800">
-                    Use the Settings button to open SDP modal for peer connections
+                    Click on a connection to start chatting, or use Settings to add new connections
                 </div>
             </div>
 
-            {/* Remote SDP is now managed via the + button (stores in remote-sdps DB) */}
+            {/* Connection List on Main Page */}
+            <div class="mt-6">
+                <h2 class="text-lg font-semibold mb-4">Connections</h2>
+                {storedConnections().length > 0 ? (
+                    <div class="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+                        {storedConnections().map((connection) => (
+                            <div class="p-4 border rounded-lg hover:shadow-md transition-shadow bg-white relative group">
+                                <button
+                                    class="absolute top-2 right-2 text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity"
+                                    onClick={async (e) => {
+                                        e.stopPropagation();
+                                        if (confirm(`Delete connection "${connection.name}"?`)) {
+                                            await deleteConnection(connection.id, appendLog);
+                                            await refreshConnections();
+                                            if (activeChat()?.id === connection.id) {
+                                                closeChat();
+                                            }
+                                            appendLog('Deleted connection: ' + connection.name);
+                                        }
+                                    }}
+                                    title="Delete connection"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                    </svg>
+                                </button>
+                                <div 
+                                    class="cursor-pointer"
+                                    onClick={() => openChatConnection(connection)}
+                                >
+                                    <div class="flex items-center justify-between mb-2 pr-10">
+                                        <div class="font-medium text-lg truncate flex-1">{connection.name}</div>
+                                        <div class="text-xs text-gray-500 ml-2">
+                                            {connectionStatus() === 'connected' && activeChat()?.id === connection.id ? (
+                                                <span class="text-green-600">● Active</span>
+                                            ) : (
+                                                <span class="text-gray-400">○</span>
+                                            )}
+                                        </div>
+                                    </div>
+                                    <div class="text-sm text-gray-600">
+                                        {new Date(connection.timestamp).toLocaleString()}
+                                    </div>
+                                    <div class="text-xs text-gray-500 mt-2">
+                                        Click to open chat
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                ) : (
+                    <div class="text-center py-8 text-gray-500">
+                        <div class="text-lg mb-2">No connections yet</div>
+                        <div class="text-sm">Use the Settings button to create your first connection</div>
+                    </div>
+                )}
+            </div>
+
+            {/* Chat Window */}
+            {activeChat() && (
+                <div class="fixed bottom-4 right-4 w-80 h-96 bg-white border rounded-lg shadow-lg z-30 flex flex-col">
+                    <div class="px-4 py-3 border-b flex items-center justify-between bg-gray-50 rounded-t-lg">
+                        <div class="font-medium">{activeChat()!.name}</div>
+                        <button 
+                            class="text-gray-500 hover:text-gray-700"
+                            onClick={closeChat}
+                        >
+                            ×
+                        </button>
+                    </div>
+                    
+                    <div class="flex-1 overflow-y-auto p-4 space-y-2" id="chat-messages">
+                        {chatMessages()[activeChat()!.id]?.length > 0 ? (
+                            chatMessages()[activeChat()!.id].map((msg) => (
+                                <div 
+                                    class={`text-sm ${msg.startsWith('You:') ? 'text-right' : 'text-left'}`}
+                                >
+                                    <span 
+                                        class={`inline-block px-3 py-2 rounded-lg ${
+                                            msg.startsWith('You:') 
+                                                ? 'bg-blue-500 text-white' 
+                                                : 'bg-gray-200 text-gray-800'
+                                        }`}
+                                    >
+                                        {msg}
+                                    </span>
+                                </div>
+                            ))
+                        ) : (
+                            <div class="text-center text-gray-500 text-sm mt-4">
+                                No messages yet. Start a conversation!
+                            </div>
+                        )}
+                    </div>
+                    
+                    <div class="px-4 py-3 border-t">
+                        <div class="flex gap-2">
+                            <input 
+                                type="text" 
+                                class="flex-1 px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="Type a message..."
+                                value={messageInput()}
+                                onInput={(e: any) => setMessageInput(e.target.value)}
+                                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
+                            />
+                            <button 
+                                class="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-50"
+                                onClick={sendMessage}
+                                disabled={!messageInput().trim() || connectionStatus() !== 'connected'}
+                            >
+                                Send
+                            </button>
+                        </div>
+                        {connectionStatus() !== 'connected' && (
+                            <div class="text-xs text-red-500 mt-1">
+                                Connection not ready
+                            </div>
+                        )}
+                    </div>
+                </div>
+            )}
 
             <div
                 class="fixed bg-white border rounded shadow z-50"
-                style={{ left: logsPos().x + 'px', top: logsPos().y + 'px', width: '360px' }}
+                style={{ 
+                    left: logsPos().x + 'px', 
+                    bottom: logsPos().y + 'px', 
+                    top: 'auto', 
+                    width: '360px' 
+                }}
                 onPointerDown={(e: any) => onLogsPointerDown(e)}
             >
                 <div class="px-3 py-2 bg-gray-100 border-b cursor-grab flex items-center justify-between" onPointerDown={(e:any)=>onLogsPointerDown(e)}>
                     <div class="text-sm font-medium">Logs</div>
                     <div class="text-xs text-gray-600">
-                        <button class="px-2 py-1" onClick={() => setLogsPos({ x: 40, y: 120 })}>Reset</button>
+                        <button class="px-2 py-1" onClick={() => setLogsPos({ x: 40, y: 40 })}>Reset</button>
                     </div>
                 </div>
                 <div class="h-80 p-2 overflow-auto" id="logs-container">
@@ -407,30 +635,19 @@ export default function App() {
                             </div>
                         </div>
 
-                        {/* Stored SDPs Display */}
-                        {storedSDPs() && (
-                            <div class="mb-4 p-3 bg-gray-50 rounded">
-                                <div class="flex items-center justify-between mb-2">
-                                    <h3 class="text-sm font-medium">Stored Connection</h3>
-                                    <button 
-                                        class="px-2 py-1 bg-blue-600 text-white text-xs rounded"
-                                        onClick={() => {
-                                            const stored = storedSDPs();
-                                            if (stored) {
-                                                setLocalSDP(stored.localSDP);
-                                                setRemoteSDP(stored.remoteSDP);
-                                                appendLog('Loaded stored SDPs into form');
-                                            }
-                                        }}
-                                    >
-                                        Load Stored SDPs
-                                    </button>
-                                </div>
-                                <div class="text-xs text-gray-600">
-                                    Stored: {new Date().toLocaleString()} (Last connection)
-                                </div>
-                            </div>
-                        )}
+                        {/* Connection Name Input */}
+                        <div class="mb-4">
+                            <label class="block text-sm font-medium mb-2">Connection Name (optional)</label>
+                            <input 
+                                type="text" 
+                                class="w-full p-2 border rounded mb-2" 
+                                placeholder="Enter a name for this connection..."
+                                value={newConnectionName()}
+                                onInput={(e: any) => setNewConnectionName(e.target.value)}
+                            />
+                        </div>
+
+
 
                         {/* Remote SDP Input */}
                         <div class="mb-4">
