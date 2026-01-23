@@ -503,10 +503,12 @@ export default function App() {
                                 <div class="flex items-center justify-between mb-2 pr-10">
                                     <div class="font-medium text-lg truncate flex-1">{connection.name}</div>
                                     <div class="text-xs text-gray-500 ml-2">
-                                        {connectionStatus() === 'connected' && activeChat()?.id === connection.id ? (
-                                            <span class="text-green-600">● Active</span>
+                                        {connectionStatus() === 'connected' ? (
+                                            <span class="text-green-600">● Connected</span>
+                                        ) : connectionStatus() === 'connecting' ? (
+                                            <span class="text-yellow-600">● Connecting</span>
                                         ) : (
-                                            <span class="text-gray-400">○</span>
+                                            <span class="text-gray-400">○ Disconnected</span>
                                         )}
                                     </div>
                                 </div>
