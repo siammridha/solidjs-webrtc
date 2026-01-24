@@ -41,7 +41,7 @@ export default function App() {
     const [connectionStatus, setConnectionStatus] = createSignal<'disconnected' | 'connecting' | 'connected'>('disconnected');
 
     const [showChatWindow, setShowChatWindow] = createSignal(false);
-    const [chatMessages, setChatMessages] = createSignal<string[]>([]);
+    const [chatMessages, setChatMessages] = createSignal<Array<{text: string, isOwn: boolean}>>([]);
     const [messageInput, setMessageInput] = createSignal('');
     const [localStream, setLocalStream] = createSignal<MediaStream | null>(null);
     const [remoteStream, setRemoteStream] = createSignal<MediaStream | null>(null);
@@ -447,13 +447,13 @@ export default function App() {
                     break;
                 case 'chat':
                 default:
-                    setChatMessages(prev => [...prev, message.message]);
+                    setChatMessages(prev => [...prev, {text: message.message, isOwn: false}]);
                     appendLog('Received chat message: ' + message.message);
                     break;
             }
         } catch (error) {
             // Fallback for non-JSON messages (backward compatibility)
-            setChatMessages(prev => [...prev, msg]);
+            setChatMessages(prev => [...prev, {text: msg, isOwn: false}]);
             appendLog('Received message: ' + msg);
         }
     }
@@ -465,7 +465,7 @@ export default function App() {
         if (!msg) return;
 
         // Add to local chat immediately
-        setChatMessages(prev => [...prev, msg]);
+        setChatMessages(prev => [...prev, {text: msg, isOwn: true}]);
         setMessageInput('');
 
         // Send via new message system
@@ -1239,18 +1239,18 @@ export default function App() {
                     
                     <div class={`overflow-y-auto p-4 space-y-2 ${isInCall() ? 'h-32' : 'flex-1 min-h-0'}`} id="chat-messages">
                         {chatMessages().length > 0 ? (
-                            chatMessages().map((msg, index) => (
+                            chatMessages().map((msg) => (
                                 <div 
-                                    class={`text-sm ${index % 2 === 0 ? 'text-right' : 'text-left'}`}
+                                    class={`text-sm ${msg.isOwn ? 'text-right' : 'text-left'}`}
                                 >
                                     <span 
                                         class={`inline-block px-3 py-2 rounded-2xl backdrop-blur-sm ${
-                                            index % 2 === 0 
+                                            msg.isOwn 
                                                 ? 'bg-blue-600/80 text-white' 
                                                 : 'bg-gray-700/60 text-gray-100'
                                         }`}
                                     >
-                                        {msg}
+                                        {msg.text}
                                     </span>
                                 </div>
                             ))
