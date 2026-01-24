@@ -1321,17 +1321,17 @@ export default function App() {
             </div>
 
             {showSDPModal() && (
-                <div class="fixed inset-0 z-40 flex items-center justify-center" style={{ 'background-color': 'rgba(0, 0, 0, 0.2)' }}>
-                    <div class="bg-white rounded p-4 w-full max-w-2xl mx-4">
+                <div class="fixed inset-0 z-40 flex items-center justify-center bg-gray-900">
+                    <div class="w-full h-full p-6 overflow-auto">
                         <div class="mb-2">
-                            <h2 class="text-lg font-semibold">
+                            <h2 class="text-lg font-semibold text-gray-100">
                                 {isInCall() ? 'Video Call - SDP Exchange' : 'SDP Exchange'}
                             </h2>
                         </div>
                         
                         {isInCall() && (
-                            <div class="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg">
-                                <div class="text-sm text-green-800">
+                            <div class="mb-4 p-3 bg-green-900/30 border border-green-700 rounded-lg">
+                                <div class="text-sm text-green-300">
                                     <strong>Video Call in Progress:</strong> SDP exchange is handled automatically via the data channel.
                                 </div>
                             </div>
@@ -1340,9 +1340,9 @@ export default function App() {
                         {/* Local SDP Display */}
                         <div class="mb-4">
                             <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-medium">Local SDP</label>
+                                <label class="block text-sm font-medium text-gray-200">Local SDP</label>
                                 <button 
-                                    class="px-3 py-1 bg-green-600 text-white rounded disabled:bg-gray-400" 
+                                    class="px-3 py-1 bg-green-600 text-white rounded disabled:bg-gray-600 hover:bg-green-700 transition-colors" 
                                     onClick={async () => {
                                         try {
                                             await createOffer();
@@ -1357,8 +1357,8 @@ export default function App() {
                                 </button>
                             </div>
                             <div class="flex gap-2">
-                                <textarea class="flex-1 h-64 p-2 border rounded" value={localSDP()} readonly />
-                                <button class="px-3 py-1 bg-indigo-600 text-white rounded self-start" onClick={copyLocalSDP}>{copied() ? 'Copied' : 'Copy'}</button>
+                                <textarea class="flex-1 h-64 p-2 border border-gray-600 rounded bg-gray-800 text-gray-100 font-mono text-sm" value={localSDP()} readonly />
+                                <button class="px-3 py-1 bg-indigo-600 text-white rounded self-start hover:bg-indigo-700 transition-colors" onClick={copyLocalSDP}>{copied() ? 'Copied' : 'Copy'}</button>
                             </div>
                         </div>
 
@@ -1368,15 +1368,15 @@ export default function App() {
 
                         {/* Remote SDP Input */}
                         <div class="mb-4">
-                            <label class="block text-sm font-medium mb-2">Remote SDP</label>
+                            <label class="block text-sm font-medium mb-2 text-gray-200">Remote SDP</label>
                             <textarea 
-                                class="w-full h-32 p-2 border rounded mb-2" 
+                                class="w-full h-32 p-2 border border-gray-600 rounded mb-2 bg-gray-800 text-gray-100 font-mono text-sm placeholder-gray-400" 
                                 placeholder="Paste remote SDP here..."
                                 value={remoteSDP()}
                                 onInput={(e: any) => setRemoteSDP(e.target.value)}
                             />
                             <button 
-                                class="px-3 py-1 bg-green-600 text-white rounded mr-2" 
+                                class="px-3 py-1 bg-green-600 text-white rounded mr-2 hover:bg-green-700 transition-colors" 
                                 onClick={async () => {
                                     if (remoteSDP()) {
                                         await applyRemoteSDP();
@@ -1387,7 +1387,6 @@ export default function App() {
                                 Set Remote SDP
                             </button>
                         </div>
-
 
                     </div>
                 </div>
