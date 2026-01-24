@@ -1371,9 +1371,20 @@ export default function App() {
                             <label class="block text-sm font-medium mb-2 text-gray-200">Remote SDP</label>
                             <textarea 
                                 class="w-full h-32 p-2 border border-gray-600 rounded mb-2 bg-gray-800 text-gray-100 font-mono text-sm placeholder-gray-400" 
-                                placeholder="Paste remote SDP here..."
+                                placeholder="Paste remote SDP here... (Click to auto-paste)"
                                 value={remoteSDP()}
                                 onInput={(e: any) => setRemoteSDP(e.target.value)}
+                                onClick={async () => {
+                                    try {
+                                        const text = await navigator.clipboard.readText();
+                                        if (text && text.trim()) {
+                                            setRemoteSDP(text);
+                                            appendLog('Remote SDP auto-pasted from clipboard');
+                                        }
+                                    } catch (e) {
+                                        appendLog('Auto-paste failed: ' + String(e));
+                                    }
+                                }}
                             />
                             <button 
                                 class="px-3 py-1 bg-green-600 text-white rounded mr-2 hover:bg-green-700 transition-colors" 
