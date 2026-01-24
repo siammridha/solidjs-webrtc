@@ -943,7 +943,7 @@ export default function App() {
                     
                     {/* Local Video (Picture-in-Picture) */}
                     {localStream() && (
-                        <div class="absolute top-4 right-4 w-48 h-36 bg-black/80 backdrop-blur-sm rounded-2xl overflow-hidden shadow-2xl border border-white/10">
+                        <div class="absolute top-4 right-4 w-48 bg-black/80 backdrop-blur-sm rounded-2xl overflow-hidden shadow-2xl border border-white/10" style="aspect-ratio: auto;">
                             {isVideoMuted() ? (
                                 <div class="w-full h-full flex items-center justify-center bg-gray-900/90 backdrop-blur-sm">
                                     <div class="text-white/80 text-center">
@@ -1206,14 +1206,14 @@ export default function App() {
                                 
                                 {/* Local Video (picture-in-picture) */}
                                 {localStream() && (
-                                    <div class="absolute bottom-2 right-2 w-24 h-18 bg-black/80 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/10">
+                                    <div class="absolute bottom-2 right-2 w-24 bg-black/80 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/10" style="aspect-ratio: auto;">
                                         <video 
                                             ref={(el) => {
                                                 if (el && localStream()) {
                                                     el.srcObject = localStream();
                                                 }
                                             }}
-                                            class="w-full h-full object-cover"
+                                    class="w-full h-full object-contain"
                                             autoplay
                                             muted
                                             playsinline
