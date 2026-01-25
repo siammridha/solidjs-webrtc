@@ -9,6 +9,12 @@ type CallMessage =
     | { type: 'call-end'; from: string }
     | { type: 'chat'; message: string };
 
+const ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
+const VIDEO_SELECTORS = {
+    REMOTE_FULLSCREEN: '#remote-video-fullscreen',
+    LOCAL_PIP: '#local-video-pip'
+} as const;
+
 let pc: RTCPeerConnection | null = null;
 let dataChannel: RTCDataChannel | null = null;
 
@@ -49,9 +55,6 @@ export default function App() {
     const [isAudioMuted, setIsAudioMuted] = createSignal(false);
     const [isVideoMuted, setIsVideoMuted] = createSignal(false);
 
-
-
-
     function appendLog(message: string) {
         setLog(prev => [...prev, message]);
         console.log(message);
@@ -70,9 +73,7 @@ export default function App() {
     function createPeerConnectionWithStatus(onDataMessage: (msg: string) => void): RTCPeerConnection {
         if (pc) return pc;
         
-        pc = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        });
+        pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
         appendLog(`RTCPeerConnection created - state: ${pc.connectionState}`);
 
@@ -106,7 +107,7 @@ export default function App() {
             appendLog(`Track received: ${event.track.kind}`);
             if (event.streams[0]) {
                 setRemoteStream(event.streams[0]);
-                attemptVideoPlay('#remote-video-fullscreen', event.streams[0]);
+                attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN, event.streams[0]);
             }
         };
 
@@ -125,14 +126,7 @@ export default function App() {
 
 
 
-    async function handleSettingsClick() {
-        try {
-            setShowSDPModal(true);
-            appendLog('Opened SDP Exchange modal');
-        } catch (e) {
-            appendLog('Modal open error: ' + String(e));
-        }
-    }
+
 
     async function copyLocalSDP() {
         try {
@@ -147,9 +141,9 @@ export default function App() {
 
 
 
-    function sendCallMessage(message: CallMessage) {
+    function sendDataMessage(message: CallMessage) {
         if (!dataChannel || dataChannel.readyState !== 'open') {
-            appendLog('Cannot send call message - data channel not ready');
+            appendLog('Cannot send message - data channel not ready');
             return;
         }
         
@@ -157,23 +151,12 @@ export default function App() {
             dataChannel.send(JSON.stringify(message));
             appendLog(`Sent ${message.type} message`);
         } catch (error) {
-            appendLog('Failed to send call message: ' + String(error));
+            appendLog(`Failed to send ${message.type} message: ` + String(error));
         }
     }
 
     function sendChatMessage(text: string) {
-        if (!dataChannel || dataChannel.readyState !== 'open') {
-            appendLog('Cannot send chat message - data channel not ready');
-            return;
-        }
-        
-        try {
-            const message: CallMessage = { type: 'chat', message: text };
-            dataChannel.send(JSON.stringify(message));
-            appendLog('Sent chat message: ' + text);
-        } catch (error) {
-            appendLog('Failed to send chat message: ' + String(error));
-        }
+        sendDataMessage({ type: 'chat', message: text });
     }
 
     function handleIncomingCall(from: string) {
@@ -189,7 +172,7 @@ export default function App() {
 
             const stream = await requestMediaPermissions();
             if (!stream) {
-                sendCallMessage({ type: 'call-decline', from: 'me' });
+                sendDataMessage({ type: 'call-decline', from: 'me' });
                 return;
             }
 
@@ -204,16 +187,16 @@ export default function App() {
                 await pc.setLocalDescription(offer);
                 appendLog('Call offer created');
                 
-                sendCallMessage({ type: 'call-offer', sdp: offer });
+                sendDataMessage({ type: 'call-offer', sdp: offer });
                 
-                attemptVideoPlay('#remote-video-fullscreen');
-                attemptVideoPlay('#local-video-pip');
+                attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
+                attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP);
             } else {
                 appendLog('No active connection for call');
                 setCallStatus('idle');
             }
         } catch (error) {
-            setCallStatus('idle');
+            resetCallState();
             appendLog('Failed to start media: ' + String(error));
         }
     }
@@ -221,16 +204,56 @@ export default function App() {
     function handleCallAccept() {
         appendLog('Call accepted by remote peer');
         if (callStatus() === 'calling') {
-            // Start the media and send offer
             startMediaAndSendOffer();
         }
     }
 
     function handleCallDecline() {
         appendLog('Call declined by remote peer');
+        resetCallState();
+    }
+
+    function resetCallState() {
         setCallStatus('idle');
         setIsInCall(false);
     }
+
+    function ConnectionStatusIndicator() {
+        const status = connectionStatus();
+        return (
+            <div class={`w-2 h-2 rounded-full ${
+                status === 'connected' ? 'bg-green-500' : 
+                status === 'connecting' ? 'bg-yellow-500 animate-pulse' : 
+                'bg-gray-400'
+            }`} title={status} />
+        );
+    }
+
+    const VideoOffIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+        </svg>
+    );
+
+    const AudioOffIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
+        </svg>
+    );
+
+    const VideoIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
+        </svg>
+    );
+
+    const AudioIcon = () => (
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
+        </svg>
+    );
 
     async function handleCallOffer(sdp: RTCSessionDescriptionInit): Promise<void> {
         try {
@@ -238,7 +261,7 @@ export default function App() {
             
             const stream = await requestMediaPermissions();
             if (!stream) {
-                sendCallMessage({ type: 'call-decline', from: 'me' });
+                sendDataMessage({ type: 'call-decline', from: 'me' });
                 return;
             }
             
@@ -256,18 +279,18 @@ export default function App() {
             await pc!.setLocalDescription(answer);
             appendLog('Answer created');
             
-            sendCallMessage({ type: 'call-answer', sdp: answer });
+            sendDataMessage({ type: 'call-answer', sdp: answer });
             
             setIsInCall(true);
             setCallStatus('active');
             appendLog('Call established');
             
-            attemptVideoPlay('#remote-video-fullscreen');
-            attemptVideoPlay('#local-video-pip');
+            attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
+            attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP);
             
         } catch (error) {
             appendLog('Failed to handle call offer: ' + String(error));
-            sendCallMessage({ type: 'call-decline', from: 'me' });
+            sendDataMessage({ type: 'call-decline', from: 'me' });
         }
     }
 
@@ -284,8 +307,8 @@ export default function App() {
             setCallStatus('active');
             appendLog('Call established');
             
-            attemptVideoPlay('#remote-video-fullscreen');
-            attemptVideoPlay('#local-video-pip');
+            attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
+            attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP);
             
         } catch (error) {
             appendLog('Failed to handle call answer: ' + String(error));
@@ -321,7 +344,6 @@ export default function App() {
                     handleCallEnd();
                     break;
                 case 'chat':
-                default:
                     setChatMessages(prev => [...prev, {text: message.message, isOwn: false}]);
                     appendLog('Received chat message: ' + message.message);
                     break;
@@ -370,7 +392,7 @@ export default function App() {
             setLocalStream(stream);
             appendLog('Media permissions granted');
             
-            attemptVideoPlay('#local-video-pip', stream);
+            attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP, stream);
             
             return stream;
         } catch (error) {
@@ -404,11 +426,11 @@ export default function App() {
             appendLog('Initiating call...');
 
             // Send call request over data channel
-            sendCallMessage({ type: 'call-request', from: 'me' } as CallMessage);
+            sendDataMessage({ type: 'call-request', from: 'me' } as CallMessage);
             appendLog('Call request sent');
             
         } catch (error) {
-            setCallStatus('idle');
+            resetCallState();
             appendLog('Failed to start call: ' + String(error));
         }
     }
@@ -443,7 +465,7 @@ export default function App() {
             appendLog('Ending call...');
 
             if (isInCall()) {
-                sendCallMessage({ type: 'call-end', from: 'me' });
+                sendDataMessage({ type: 'call-end', from: 'me' });
             }
 
             const local = localStream();
@@ -453,11 +475,10 @@ export default function App() {
             }
 
             setRemoteStream(null);
-            setIsInCall(false);
-            setCallStatus('idle');
             setIncomingCall(null);
             setIsAudioMuted(false);
             setIsVideoMuted(false);
+            resetCallState();
 
             if (pc) {
                 pc.getSenders().forEach(sender => {
@@ -468,7 +489,7 @@ export default function App() {
 
             appendLog('Call ended');
         } catch (error) {
-            setCallStatus('idle');
+            resetCallState();
             appendLog('Error ending call: ' + String(error));
         }
     }
@@ -575,19 +596,19 @@ export default function App() {
     });
 
     createEffect(() => {
-        const remoteVideo = document.querySelector('#remote-video-fullscreen') as HTMLVideoElement;
-        if (remoteVideo && remoteStream()) {
-            remoteVideo.srcObject = remoteStream();
-            attemptVideoPlay('#remote-video-fullscreen');
+        const remoteVideo = document.querySelector(VIDEO_SELECTORS.REMOTE_FULLSCREEN) as HTMLVideoElement;
+        const remote = remoteStream();
+        if (remoteVideo && remote) {
+            remoteVideo.srcObject = remote;
+            attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
         }
-    });
 
-    createEffect(() => {
-        const localVideo = document.querySelector('#local-video-pip') as HTMLVideoElement;
-        if (localVideo && localStream()) {
-            localVideo.srcObject = localStream();
+        const localVideo = document.querySelector(VIDEO_SELECTORS.LOCAL_PIP) as HTMLVideoElement;
+        const local = localStream();
+        if (localVideo && local) {
+            localVideo.srcObject = local;
             localVideo.muted = true;
-            attemptVideoPlay('#local-video-pip');
+            attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP);
         }
     });
 
@@ -625,8 +646,6 @@ export default function App() {
         window.removeEventListener('pointerup', onLogsPointerUp as any);
     });
 
-
-
     return (
         <div class={`relative w-full h-screen overflow-hidden transition-colors duration-300 ${isInCall() ? 'bg-black' : 'bg-gray-50'}`}>
 
@@ -655,10 +674,7 @@ export default function App() {
                             {isVideoMuted() ? (
                                 <div class="w-full h-full flex items-center justify-center bg-gray-900/90 backdrop-blur-sm">
                                     <div class="text-white/80 text-center">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 mx-auto mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                                        </svg>
+                                        <VideoOffIcon />
                                         <div class="text-xs">Camera Off</div>
                                     </div>
                                 </div>
@@ -679,14 +695,7 @@ export default function App() {
                             <div class="flex items-center gap-2">
                                 <div class="font-medium text-white">Chat</div>
                                 <div class="flex items-center gap-1">
-                                    {connectionStatus() === 'connected' ? (
-                                        <div class="w-2 h-2 bg-green-500 rounded-full" title="Connected" />
-                                    ) : connectionStatus() === 'connecting' ? (
-                                        <div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" title="Connecting" />
-                                    ) : (
-                                        <div class="w-2 h-2 bg-gray-400 rounded-full" title="Disconnected" />
-                                    )}
-
+                                    <ConnectionStatusIndicator />
                                 </div>
                             </div>
 
@@ -703,16 +712,7 @@ export default function App() {
                                 }`}
                                 title={isAudioMuted() ? "Unmute microphone" : "Mute microphone"}
                             >
-                                {isAudioMuted() ? (
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                                    </svg>
-                                ) : (
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-                                    </svg>
-                                )}
+                                {isAudioMuted() ? <AudioOffIcon /> : <AudioIcon />}
                             </button>
                             
                             <button
@@ -732,16 +732,7 @@ export default function App() {
                                 }`}
                                 title={isVideoMuted() ? "Turn on camera" : "Turn off camera"}
                             >
-                                {isVideoMuted() ? (
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-                                    </svg>
-                                ) : (
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                    </svg>
-                                )}
+                                {isVideoMuted() ? <VideoOffIcon /> : <VideoIcon />}
                             </button>
                         </div>
                     </div>
@@ -764,7 +755,7 @@ export default function App() {
                             <button
                                 onClick={() => {
                                     setIncomingCall(null);
-                                    sendCallMessage({ type: 'call-accept', from: 'me' } as CallMessage);
+                                    sendDataMessage({ type: 'call-accept', from: 'me' } as CallMessage);
                                 }}
                                 class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
                             >
@@ -776,7 +767,7 @@ export default function App() {
                             <button
                                 onClick={() => {
                                     setIncomingCall(null);
-                                    sendCallMessage({ type: 'call-decline', from: 'me' } as CallMessage);
+                                    sendDataMessage({ type: 'call-decline', from: 'me' } as CallMessage);
                                 }}
                                 class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
                             >
@@ -801,14 +792,7 @@ export default function App() {
                         <div class="flex items-center gap-2">
                             <div class="font-medium text-white">Chat</div>
                             <div class="flex items-center gap-1">
-                                {connectionStatus() === 'connected' ? (
-                                    <div class="w-2 h-2 bg-green-500 rounded-full" title="Connected" />
-                                ) : connectionStatus() === 'connecting' ? (
-                                    <div class="w-2 h-2 bg-yellow-500 rounded-full animate-pulse" title="Connecting" />
-                                ) : (
-                                    <div class="w-2 h-2 bg-gray-400 rounded-full" title="Disconnected" />
-                                )}
-
+                                <ConnectionStatusIndicator />
                             </div>
                         </div>
                         <div class="flex items-center gap-2">
