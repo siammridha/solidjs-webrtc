@@ -17,11 +17,6 @@ const VIDEO_SELECTORS = {
 
 let pc: RTCPeerConnection | null = null;
 let dataChannel: RTCDataChannel | null = null;
-
-
-
-
-
 async function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
     if (pc.iceGatheringState === 'complete') return;
     
@@ -47,6 +42,7 @@ export default function App() {
     const [showChatWindow, setShowChatWindow] = createSignal(false);
     const [chatMessages, setChatMessages] = createSignal<Array<{text: string, isOwn: boolean}>>([]);
     const [messageInput, setMessageInput] = createSignal('');
+
     const [localStream, setLocalStream] = createSignal<MediaStream | null>(null);
     const [remoteStream, setRemoteStream] = createSignal<MediaStream | null>(null);
     const [isInCall, setIsInCall] = createSignal(false);
@@ -60,7 +56,7 @@ export default function App() {
         console.log(message);
     }
 
-    function attemptVideoPlay(selector: string, stream?: MediaStream): void {
+    function setupVideoElement(selector: string, stream?: MediaStream): void {
         setTimeout(() => {
             const video = document.querySelector(selector) as HTMLVideoElement;
             if (video) {
@@ -68,6 +64,14 @@ export default function App() {
                 video.play().catch(err => console.log(`Video play failed for ${selector}:`, err));
             }
         }, 100);
+    }
+
+    function ensureVideoPlaying(selector: string): void {
+        const video = document.querySelector(selector) as HTMLVideoElement;
+        if (video?.srcObject && video.paused) {
+            video.muted = true;
+            video.play().catch(() => {});
+        }
     }
 
     function createPeerConnectionWithStatus(onDataMessage: (msg: string) => void): RTCPeerConnection {
@@ -107,7 +111,7 @@ export default function App() {
             appendLog(`Track received: ${event.track.kind}`);
             if (event.streams[0]) {
                 setRemoteStream(event.streams[0]);
-                attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN, event.streams[0]);
+                setupVideoElement(VIDEO_SELECTORS.REMOTE_FULLSCREEN, event.streams[0]);
             }
         };
 
@@ -122,12 +126,6 @@ export default function App() {
         return pc;
     }
 
-
-
-
-
-
-
     async function copyLocalSDP() {
         try {
             await navigator.clipboard.writeText(localSDP() || '');
@@ -137,11 +135,7 @@ export default function App() {
         } catch (e) {
             appendLog('Copy failed: ' + String(e));
         }
-    }
-
-
-
-    function sendDataMessage(message: CallMessage) {
+    }    function sendDataMessage(message: CallMessage) {
         if (!dataChannel || dataChannel.readyState !== 'open') {
             appendLog('Cannot send message - data channel not ready');
             return;
@@ -189,8 +183,8 @@ export default function App() {
                 
                 sendDataMessage({ type: 'call-offer', sdp: offer });
                 
-                attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
-                attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP);
+                setupVideoElement(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
+                setupVideoElement(VIDEO_SELECTORS.LOCAL_PIP);
             } else {
                 appendLog('No active connection for call');
                 setCallStatus('idle');
@@ -229,28 +223,28 @@ export default function App() {
         );
     }
 
-    const VideoOffIcon = () => (
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    const VideoOffIcon = (props: { class?: string }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" class={props.class || "w-6 h-6"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
         </svg>
     );
 
-    const AudioOffIcon = () => (
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    const AudioOffIcon = (props: { class?: string }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" class={props.class || "w-6 h-6"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
         </svg>
     );
 
-    const VideoIcon = () => (
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    const VideoIcon = (props: { class?: string }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" class={props.class || "w-6 h-6"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
         </svg>
     );
 
-    const AudioIcon = () => (
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+    const AudioIcon = (props: { class?: string }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" class={props.class || "w-6 h-6"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
         </svg>
     );
@@ -285,8 +279,8 @@ export default function App() {
             setCallStatus('active');
             appendLog('Call established');
             
-            attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
-            attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP);
+            setupVideoElement(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
+            setupVideoElement(VIDEO_SELECTORS.LOCAL_PIP);
             
         } catch (error) {
             appendLog('Failed to handle call offer: ' + String(error));
@@ -307,8 +301,8 @@ export default function App() {
             setCallStatus('active');
             appendLog('Call established');
             
-            attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
-            attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP);
+            setupVideoElement(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
+            setupVideoElement(VIDEO_SELECTORS.LOCAL_PIP);
             
         } catch (error) {
             appendLog('Failed to handle call answer: ' + String(error));
@@ -355,8 +349,6 @@ export default function App() {
         }
     }
 
-
-
     async function sendMessage() {
         const msg = messageInput().trim();
         if (!msg) return;
@@ -368,8 +360,6 @@ export default function App() {
         // Send via new message system
         sendChatMessage(msg);
     }
-
-
 
     async function requestMediaPermissions(): Promise<MediaStream | null> {
         try {
@@ -392,7 +382,7 @@ export default function App() {
             setLocalStream(stream);
             appendLog('Media permissions granted');
             
-            attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP, stream);
+            setupVideoElement(VIDEO_SELECTORS.LOCAL_PIP, stream);
             
             return stream;
         } catch (error) {
@@ -480,12 +470,10 @@ export default function App() {
             setIsVideoMuted(false);
             resetCallState();
 
-            if (pc) {
-                pc.getSenders().forEach(sender => {
-                    if (sender.track) pc!.removeTrack(sender);
-                });
-                appendLog('Media tracks removed');
-            }
+            pc?.getSenders().forEach(sender => {
+                if (sender.track) pc!.removeTrack(sender);
+            });
+            appendLog('Media tracks removed');
 
             appendLog('Call ended');
         } catch (error) {
@@ -493,8 +481,6 @@ export default function App() {
             appendLog('Error ending call: ' + String(error));
         }
     }
-
-
 
     async function createOffer(): Promise<void> {
         const connection = createPeerConnectionWithStatus(onDataMessage);
@@ -553,23 +539,16 @@ export default function App() {
         }
     }
 
-
-
     onCleanup(() => {
-        if (pc) pc.close();
+        pc?.close();
     });
 
     onMount(() => {
         appendLog('Application ready');
         
         const handleUserInteraction = () => {
-            const videos = document.querySelectorAll('video');
-            videos.forEach(video => {
-                if (video.srcObject && (video as HTMLVideoElement).paused) {
-                    (video as HTMLVideoElement).muted = true;
-                    (video as HTMLVideoElement).play().catch(() => {});
-                }
-            });
+            ensureVideoPlaying(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
+            ensureVideoPlaying(VIDEO_SELECTORS.LOCAL_PIP);
         };
         
         ['click', 'keydown', 'touchstart', 'mousedown'].forEach(eventType => {
@@ -600,7 +579,7 @@ export default function App() {
         const remote = remoteStream();
         if (remoteVideo && remote) {
             remoteVideo.srcObject = remote;
-            attemptVideoPlay(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
+            setupVideoElement(VIDEO_SELECTORS.REMOTE_FULLSCREEN);
         }
 
         const localVideo = document.querySelector(VIDEO_SELECTORS.LOCAL_PIP) as HTMLVideoElement;
@@ -608,7 +587,7 @@ export default function App() {
         if (localVideo && local) {
             localVideo.srcObject = local;
             localVideo.muted = true;
-            attemptVideoPlay(VIDEO_SELECTORS.LOCAL_PIP);
+            setupVideoElement(VIDEO_SELECTORS.LOCAL_PIP);
         }
     });
 
@@ -673,10 +652,10 @@ export default function App() {
                         <div class="absolute top-4 right-4 w-48 bg-black/80 backdrop-blur-sm rounded-2xl overflow-hidden shadow-2xl border border-white/10" style="aspect-ratio: auto;">
                             {isVideoMuted() ? (
                                 <div class="w-full h-full flex items-center justify-center bg-gray-900/90 backdrop-blur-sm">
-                                    <div class="text-white/80 text-center">
-                                        <VideoOffIcon />
-                                        <div class="text-xs">Camera Off</div>
-                                    </div>
+                                <div class="text-white/80 text-center">
+                                    <VideoOffIcon class="w-12 h-12" />
+                                    <div class="text-xs">Camera Off</div>
+                                </div>
                                 </div>
                             ) : (
                                 <video 
@@ -741,12 +720,10 @@ export default function App() {
             {incomingCall() && (
                 <div class="fixed inset-0 z-40 flex items-center justify-center" style={{ 'background-color': 'rgba(0, 0, 0, 0.3)' }}>
                     <div class="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
-                        <div class="text-center mb-4">
-                            <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="w-8 h-8 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                </svg>
-                            </div>
+                            <div class="text-center mb-4">
+                                <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
+                                    <VideoIcon class="w-8 h-8 text-green-600" />
+                                </div>
                             <h3 class="text-lg font-semibold mb-1">Incoming Video Call</h3>
                             <p class="text-gray-600">{incomingCall()!.from} is calling you</p>
                         </div>
@@ -810,13 +787,9 @@ export default function App() {
                                     title={connectionStatus() !== 'connected' ? 'No connection' : callStatus() === 'calling' ? 'Calling...' : callStatus() === 'idle' ? 'Start video call' : 'Call in progress...'}
                                 >
                                     {callStatus() === 'calling' ? (
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
-                                        </svg>
+                                        <AudioIcon class="w-5 h-5" />
                                     ) : (
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                                        </svg>
+                                        <VideoIcon class="w-5 h-5" />
                                     )}
                                 </button>
                             ) : (
@@ -860,12 +833,12 @@ export default function App() {
                                 {/* Local Video (picture-in-picture) */}
                                 {localStream() && (
                                     <div class="absolute bottom-2 right-2 w-24 bg-black/80 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/10" style="aspect-ratio: auto;">
-                                <video 
-                                    class="w-full h-full object-contain"
-                                    autoplay
-                                    muted
-                                    playsinline
-                                />
+                                        <video 
+                                            class="w-full h-full object-contain"
+                                            autoplay
+                                            muted
+                                            playsinline
+                                        />
                                     </div>
                                 )}
                                 
@@ -972,17 +945,9 @@ export default function App() {
                     <div class="w-full h-full p-6 overflow-auto">
                         <div class="mb-2">
                             <h2 class="text-lg font-semibold text-gray-100">
-                                {isInCall() ? 'Video Call - SDP Exchange' : 'SDP Exchange'}
+                                SDP Exchange
                             </h2>
                         </div>
-                        
-                        {isInCall() && (
-                            <div class="mb-4 p-3 bg-green-900/30 border border-green-700 rounded-lg">
-                                <div class="text-sm text-green-300">
-                                    Video Call in Progress: SDP exchange is automatic via data channel
-                                </div>
-                            </div>
-                        )}
                         
                         {/* Local SDP Display */}
                         <div class="mb-4">
@@ -998,9 +963,8 @@ export default function App() {
                                             appendLog('Failed to create offer: ' + String(e));
                                         }
                                     }}
-                                    disabled={isInCall()}
                                 >
-                                    {isInCall() ? 'Call in Progress' : 'Create Offer'}
+                                    Create Offer
                                 </button>
                             </div>
                             <div class="flex gap-2">
@@ -1008,10 +972,6 @@ export default function App() {
                                 <button class="px-3 py-1 bg-indigo-600 text-white rounded self-start hover:bg-indigo-700 transition-colors" onClick={copyLocalSDP}>{copied() ? 'Copied' : 'Copy'}</button>
                             </div>
                         </div>
-
-
-
-
 
                         {/* Remote SDP Input */}
                         <div class="mb-4">
