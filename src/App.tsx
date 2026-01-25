@@ -1,7 +1,4 @@
 import { createSignal, onCleanup, onMount, createEffect } from 'solid-js';
-import { version } from 'vite';
-
-type SDPString = string;
 
 type CallMessage = 
     | { type: 'call-request'; from: string }
@@ -19,22 +16,23 @@ let dataChannel: RTCDataChannel | null = null;
 
 
 
-async function waitForIceGatheringComplete(pc: RTCPeerConnection) {
+async function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void> {
     if (pc.iceGatheringState === 'complete') return;
-    await new Promise((resolve) => {
-        function check() {
+    
+    return new Promise((resolve) => {
+        const check = () => {
             if (pc.iceGatheringState === 'complete') {
                 pc.removeEventListener('icegatheringstatechange', check);
-                resolve(true);
+                resolve();
             }
-        }
+        };
         pc.addEventListener('icegatheringstatechange', check);
     });
 }
 
 export default function App() {
-    const [localSDP, setLocalSDP] = createSignal<SDPString>('');
-    const [remoteSDP, setRemoteSDP] = createSignal<SDPString>('');
+    const [localSDP, setLocalSDP] = createSignal<string>('');
+    const [remoteSDP, setRemoteSDP] = createSignal<string>('');
     const [showSDPModal, setShowSDPModal] = createSignal(true);
     const [copied, setCopied] = createSignal(false);
     const [log, setLog] = createSignal<string[]>([]);
@@ -54,130 +52,70 @@ export default function App() {
 
 
 
-    function appendLog(s: string) {
-        setLog((l) => [...l, s]);
-        console.log(s);
+    function appendLog(message: string) {
+        setLog(prev => [...prev, message]);
+        console.log(message);
     }
 
-    function createPeerConnectionWithStatus(onDataMessage: (msg: string) => void) {
+    function attemptVideoPlay(selector: string, stream?: MediaStream): void {
+        setTimeout(() => {
+            const video = document.querySelector(selector) as HTMLVideoElement;
+            if (video) {
+                if (stream) video.srcObject = stream;
+                video.play().catch(err => console.log(`Video play failed for ${selector}:`, err));
+            }
+        }, 100);
+    }
+
+    function createPeerConnectionWithStatus(onDataMessage: (msg: string) => void): RTCPeerConnection {
         if (pc) return pc;
+        
         pc = new RTCPeerConnection({
-            iceServers: [
-                { urls: 'stun:stun.l.google.com:19302' }
-            ]
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
         });
 
-        // Log initial state
-        appendLog(`RTCPeerConnection created - initial state: ${pc.connectionState}, ICE: ${pc.iceConnectionState}, gathering: ${pc.iceGatheringState}`);
-
-
+        appendLog(`RTCPeerConnection created - state: ${pc.connectionState}`);
 
         pc.ondatachannel = (ev) => {
-            appendLog(`ondatachannel: received data channel ${ev.channel.label}, state: ${ev.channel.readyState}`);
+            appendLog(`Data channel received: ${ev.channel.label}`);
             dataChannel = ev.channel;
             dataChannel.onmessage = (e) => onDataMessage(e.data);
-            dataChannel.onopen = () => {
-                appendLog('Data channel open - connection established');
-            };
-            dataChannel.onclose = () => {
-                appendLog('Data channel closed');
-            };
-            dataChannel.onerror = (e) => {
-                appendLog('Data channel error: ' + String(e));
-            };
+            dataChannel.onopen = () => appendLog('Data channel open');
+            dataChannel.onclose = () => appendLog('Data channel closed');
+            dataChannel.onerror = (e) => appendLog('Data channel error: ' + String(e));
         };
 
-        pc.onconnectionstatechange = async () => {
+        pc.onconnectionstatechange = () => {
             const state = pc?.connectionState;
-            appendLog(`onconnectionstatechange: ${state}`);
+            appendLog(`Connection state: ${state}`);
+            
             if (state === 'connected') {
                 setShowSDPModal(false);
                 setConnectionStatus('connected');
-                setShowChatWindow(true); // Show chat window when connected
-                
-                // Ensure both sides are ready for video exchange
-                appendLog('Peer connection established - ready for video track exchange');
-                
-                // Safari specific: Trigger video play when connection is fully established
-                setTimeout(() => {
-                    const remoteVideo = document.querySelector('#remote-video-fullscreen') as HTMLVideoElement;
-                    const localVideo = document.querySelector('#local-video-pip') as HTMLVideoElement;
-                    
-                    [remoteVideo, localVideo].forEach(video => {
-                        if (video && video.srcObject && (video as HTMLVideoElement).paused) {
-                            (video as HTMLVideoElement).play().catch(err => {
-                                console.log('Connection state video play failed:', err);
-                            });
-                        }
-                    });
-                }, 1000);
-                
-                // Connection established
+                setShowChatWindow(true);
                 setLocalSDP('');
                 setRemoteSDP('');
                 appendLog('Connection established');
             } else if (state === 'disconnected' || state === 'failed') {
                 setConnectionStatus('disconnected');
-                if (isInCall()) {
-                    endCall();
-                }
+                if (isInCall()) endCall();
             }
         };
 
         pc.ontrack = (event) => {
-            appendLog(`ontrack: received ${event.track.kind} track from remote peer`);
+            appendLog(`Track received: ${event.track.kind}`);
             if (event.streams[0]) {
                 setRemoteStream(event.streams[0]);
-                appendLog('Remote stream set - this should now play on the caller');
-                
-                // Safari specific: Force video to play after receiving track
-                setTimeout(() => {
-                    const remoteVideo = document.querySelector('#remote-video-fullscreen') as HTMLVideoElement;
-                    if (remoteVideo) {
-                        remoteVideo.srcObject = event.streams[0];
-                        remoteVideo.play().then(() => {
-                            console.log('Remote video playing successfully after ontrack');
-                        }).catch(err => {
-                            console.log('Safari ontrack video play failed:', err);
-                            // Try with user gesture
-                            const attemptPlayWithGesture = () => {
-                                remoteVideo.play().catch(e => console.log('Gesture play failed:', e));
-                            };
-                            document.addEventListener('click', attemptPlayWithGesture, { once: true });
-                        });
-                    }
-                }, 100);
+                attemptVideoPlay('#remote-video-fullscreen', event.streams[0]);
             }
-        };
-
-        pc.oniceconnectionstatechange = () => {
-            appendLog(`oniceconnectionstatechange: ${pc?.iceConnectionState}`);
-        };
-
-        pc.onicegatheringstatechange = () => {
-            appendLog(`onicegatheringstatechange: ${pc?.iceGatheringState}`);
-        };
-
-        pc.onsignalingstatechange = () => {
-            appendLog(`onsignalingstatechange: ${pc?.signalingState}`);
         };
 
         pc.onicecandidate = (ev) => {
             if (ev.candidate) {
-                appendLog(`onicecandidate: ${ev.candidate.type} candidate for ${ev.candidate.address || 'unknown'} (${ev.candidate.protocol})`);
+                appendLog(`ICE candidate: ${ev.candidate.type} ${ev.candidate.address || 'unknown'}`);
             } else {
-                appendLog('onicecandidate: ICE gathering complete (null candidate)');
+                appendLog('ICE gathering complete');
             }
-        };
-
-        pc.onicecandidateerror = (ev) => {
-            appendLog(`onicecandidateerror: ${ev.errorText} (address: ${ev.address}, port: ${ev.port})`);
-        };
-
-        pc.onnegotiationneeded = async () => {
-            appendLog('onnegotiationneeded: renegotiation required');
-            // Don't automatically renegotiate here as we handle it manually in call flow
-            // This prevents conflicts with our explicit offer/answer handling
         };
 
         return pc;
@@ -244,50 +182,34 @@ export default function App() {
         setCallStatus('ringing');
     }
 
-    async function startMediaAndSendOffer() {
+    async function startMediaAndSendOffer(): Promise<void> {
         try {
             setCallStatus('connecting');
             appendLog('Getting media for call...');
 
             const stream = await requestMediaPermissions();
             if (!stream) {
-                sendCallMessage({ type: 'call-decline', from: 'me' } as CallMessage);
+                sendCallMessage({ type: 'call-decline', from: 'me' });
                 return;
             }
 
-            if (pc && pc.connectionState === 'connected') {
-                // Add tracks first
-                stream.getTracks().forEach(track => {
-                    pc!.addTrack(track, stream);
-                });
-                
+            if (pc?.connectionState === 'connected') {
+                stream.getTracks().forEach(track => pc!.addTrack(track, stream));
                 setIsInCall(true);
-                appendLog('Media tracks added to peer connection');
+                appendLog('Media tracks added');
                 
-                // Wait a bit for tracks to be fully added before creating offer
                 await new Promise(resolve => setTimeout(resolve, 100));
                 
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
                 appendLog('Call offer created');
                 
-                // Send the offer over data channel
-                sendCallMessage({ type: 'call-offer', sdp: offer } as CallMessage);
+                sendCallMessage({ type: 'call-offer', sdp: offer });
                 
-                // Safari specific: Force video elements to play after adding tracks
-                setTimeout(() => {
-                    const remoteVideo = document.querySelector('#remote-video-fullscreen') as HTMLVideoElement;
-                    const localVideo = document.querySelector('#local-video-pip') as HTMLVideoElement;
-                    
-                    if (remoteVideo && remoteVideo.srcObject) {
-                        remoteVideo.play().catch(err => console.log('Safari remote video play failed:', err));
-                    }
-                    if (localVideo && localVideo.srcObject) {
-                        localVideo.play().catch(err => console.log('Safari local video play failed:', err));
-                    }
-                }, 500);
+                attemptVideoPlay('#remote-video-fullscreen');
+                attemptVideoPlay('#local-video-pip');
             } else {
-                appendLog('No active peer connection for call');
+                appendLog('No active connection for call');
                 setCallStatus('idle');
             }
         } catch (error) {
@@ -310,14 +232,13 @@ export default function App() {
         setIsInCall(false);
     }
 
-    async function handleCallOffer(sdp: RTCSessionDescriptionInit) {
+    async function handleCallOffer(sdp: RTCSessionDescriptionInit): Promise<void> {
         try {
             appendLog('Received call offer');
             
-            // Get media permissions for incoming call
             const stream = await requestMediaPermissions();
             if (!stream) {
-                sendCallMessage({ type: 'call-decline', from: 'me' } as CallMessage);
+                sendCallMessage({ type: 'call-decline', from: 'me' });
                 return;
             }
             
@@ -325,13 +246,9 @@ export default function App() {
                 createPeerConnectionWithStatus(onDataMessage);
             }
             
-            // Add local media tracks BEFORE creating answer
-            stream.getTracks().forEach(track => {
-                pc!.addTrack(track, stream);
-            });
-            appendLog('Local media tracks added to peer connection');
+            stream.getTracks().forEach(track => pc!.addTrack(track, stream));
+            appendLog('Local media tracks added');
             
-            // Set remote offer and create answer
             await pc!.setRemoteDescription(sdp);
             appendLog('Remote offer set');
             
@@ -339,37 +256,14 @@ export default function App() {
             await pc!.setLocalDescription(answer);
             appendLog('Answer created');
             
-            // Send answer back
             sendCallMessage({ type: 'call-answer', sdp: answer });
             
             setIsInCall(true);
             setCallStatus('active');
-            appendLog('Call established - sending answer');
+            appendLog('Call established');
             
-            // Debug: Log track information
-            setTimeout(() => {
-                if (pc?.getReceivers) {
-                    const receivers = pc.getReceivers();
-                    appendLog(`Answer sent - track receivers: ${receivers.length}`);
-                }
-                if (pc?.getSenders) {
-                    const senders = pc.getSenders();
-                    appendLog(`Answer sent - track senders: ${senders.length}`);
-                }
-            }, 500);
-            
-            // Safari specific: Force video elements to play after connection
-            setTimeout(() => {
-                const remoteVideo = document.querySelector('#remote-video-fullscreen') as HTMLVideoElement;
-                const localVideo = document.querySelector('#local-video-pip') as HTMLVideoElement;
-                
-                if (remoteVideo && remoteVideo.srcObject) {
-                    remoteVideo.play().catch(err => console.log('Safari remote video play failed:', err));
-                }
-                if (localVideo && localVideo.srcObject) {
-                    localVideo.play().catch(err => console.log('Safari local video play failed:', err));
-                }
-            }, 500);
+            attemptVideoPlay('#remote-video-fullscreen');
+            attemptVideoPlay('#local-video-pip');
             
         } catch (error) {
             appendLog('Failed to handle call offer: ' + String(error));
@@ -377,7 +271,7 @@ export default function App() {
         }
     }
 
-    async     function handleCallAnswer(sdp: RTCSessionDescriptionInit) {
+    async function handleCallAnswer(sdp: RTCSessionDescriptionInit): Promise<void> {
         try {
             appendLog('Received call answer');
             
@@ -388,29 +282,10 @@ export default function App() {
             
             await pc.setRemoteDescription(sdp);
             setCallStatus('active');
-            appendLog('Call established with remote peer');
+            appendLog('Call established');
             
-            // Debug: Log current tracks
-            if (pc.getReceivers) {
-                const receivers = pc.getReceivers();
-                appendLog(`Current track receivers: ${receivers.length}`);
-                receivers.forEach(receiver => {
-                    appendLog(`- Receiver track: ${receiver.track.kind} (enabled: ${receiver.track.enabled}, state: ${receiver.track.readyState})`);
-                });
-            }
-            
-            // Safari specific: Force video elements to play after connection
-            setTimeout(() => {
-                const remoteVideo = document.querySelector('#remote-video-fullscreen') as HTMLVideoElement;
-                const localVideo = document.querySelector('#local-video-pip') as HTMLVideoElement;
-                
-                if (remoteVideo && remoteVideo.srcObject) {
-                    remoteVideo.play().catch(err => console.log('Safari remote video play failed:', err));
-                }
-                if (localVideo && localVideo.srcObject) {
-                    localVideo.play().catch(err => console.log('Safari local video play failed:', err));
-                }
-            }, 500);
+            attemptVideoPlay('#remote-video-fullscreen');
+            attemptVideoPlay('#local-video-pip');
             
         } catch (error) {
             appendLog('Failed to handle call answer: ' + String(error));
@@ -476,9 +351,8 @@ export default function App() {
 
     async function requestMediaPermissions(): Promise<MediaStream | null> {
         try {
-            appendLog('Requesting camera and microphone permissions...');
+            appendLog('Requesting media permissions...');
             
-            // Safari-specific constraints for better compatibility
             const constraints = {
                 video: {
                     width: { ideal: 1280, max: 1920 },
@@ -493,23 +367,10 @@ export default function App() {
             };
             
             const stream = await navigator.mediaDevices.getUserMedia(constraints);
-            
             setLocalStream(stream);
-            appendLog('Media permissions granted successfully');
+            appendLog('Media permissions granted');
             
-            // Safari specific: Force local video to play after getting stream
-            setTimeout(() => {
-                const localVideo = document.querySelector('#local-video-pip') as HTMLVideoElement;
-                if (localVideo) {
-                    localVideo.srcObject = stream;
-                    localVideo.muted = true; // Ensure muted for Safari autoplay
-                    localVideo.play().then(() => {
-                        console.log('Local video playing after media permissions');
-                    }).catch(err => {
-                        console.log('Local video play after permissions failed:', err);
-                    });
-                }
-            }, 100);
+            attemptVideoPlay('#local-video-pip', stream);
             
             return stream;
         } catch (error) {
@@ -517,11 +378,11 @@ export default function App() {
             appendLog('Media permissions denied: ' + errorMessage);
             
             if (errorMessage.includes('NotAllowedError')) {
-                appendLog('Please allow camera and microphone access in your browser settings');
+                appendLog('Please allow camera and microphone access');
             } else if (errorMessage.includes('NotFoundError')) {
-                appendLog('No camera or microphone found. Please connect a device.');
+                appendLog('No camera or microphone found');
             } else if (errorMessage.includes('NotReadableError')) {
-                appendLog('Camera or microphone is already in use by another application');
+                appendLog('Camera or microphone is already in use');
             }
             return null;
         }
@@ -576,14 +437,13 @@ export default function App() {
         }
     }
 
-    async function endCall() {
+    async function endCall(): Promise<void> {
         try {
             setCallStatus('ending');
             appendLog('Ending call...');
 
-            // Send call end message
             if (isInCall()) {
-                sendCallMessage({ type: 'call-end', from: 'me' } as CallMessage);
+                sendCallMessage({ type: 'call-end', from: 'me' });
             }
 
             const local = localStream();
@@ -600,13 +460,10 @@ export default function App() {
             setIsVideoMuted(false);
 
             if (pc) {
-                const senders = pc.getSenders();
-                senders.forEach(sender => {
-                    if (sender.track) {
-                        pc!.removeTrack(sender);
-                    }
+                pc.getSenders().forEach(sender => {
+                    if (sender.track) pc!.removeTrack(sender);
                 });
-                appendLog('Media tracks removed from peer connection');
+                appendLog('Media tracks removed');
             }
 
             appendLog('Call ended');
@@ -618,79 +475,55 @@ export default function App() {
 
 
 
-    async function createOffer() {
+    async function createOffer(): Promise<void> {
         const connection = createPeerConnectionWithStatus(onDataMessage);
         dataChannel = connection.createDataChannel('chat');
-        appendLog(`createDataChannel: created data channel 'chat', state: ${dataChannel.readyState}`);
+        appendLog('Data channel created');
         
         dataChannel.onmessage = (e) => onDataMessage(e.data);
-        dataChannel.onopen = () => appendLog('Data channel opened (offerer)');
-        dataChannel.onclose = () => appendLog('Data channel closed (offerer)');
-        dataChannel.onerror = (e) => appendLog('Data channel error (offerer): ' + String(e));
+        dataChannel.onopen = () => appendLog('Data channel opened');
+        dataChannel.onclose = () => appendLog('Data channel closed');
+        dataChannel.onerror = (e) => appendLog('Data channel error: ' + String(e));
 
         const offer = await connection.createOffer();
-        appendLog(`createOffer: offer created, type: ${offer.type}`);
         await connection.setLocalDescription(offer);
-        appendLog('setLocalDescription: offer set as local description');
         await waitForIceGatheringComplete(connection);
         setLocalSDP(JSON.stringify(connection.localDescription));
-        appendLog('Offer created with data channel and ICE candidates');
+        appendLog('Offer created');
     }
 
-    async function createAnswerFromRemote(remote: RTCSessionDescriptionInit) {
+    async function createAnswerFromRemote(remote: RTCSessionDescriptionInit): Promise<void> {
         const connection = createPeerConnectionWithStatus(onDataMessage);
         
-        appendLog(`createAnswerFromRemote: processing remote ${remote.type}`);
-        
-        // Check if this is a video call offer
-        const isVideoCall = remote.sdp && remote.sdp.includes('m=video');
+        const isVideoCall = remote.sdp?.includes('m=video');
         if (isVideoCall) {
-            appendLog('Video call detected - preparing to receive media');
+            appendLog('Video call detected');
         }
         
         await connection.setRemoteDescription(remote);
-        appendLog('setRemoteDescription: remote offer set');
         const answer = await connection.createAnswer();
-        appendLog(`createAnswer: answer created, type: ${answer.type}`);
         await connection.setLocalDescription(answer);
-        appendLog('setLocalDescription: answer set as local description');
         await waitForIceGatheringComplete(connection);
         setLocalSDP(JSON.stringify(connection.localDescription));
-        appendLog('Answer created with data channel and ICE candidates');
+        appendLog('Answer created');
         
-        // Show SDP modal for the user to copy the answer
         setShowSDPModal(true);
-        
-        if (isVideoCall) {
-            appendLog('Please copy the answer SDP and send it back to establish the video call');
-        }
     }
 
-    async function applyRemoteSDP() {
+    async function applyRemoteSDP(): Promise<void> {
         try {
             const parsed: RTCSessionDescriptionInit = JSON.parse(remoteSDP());
-            appendLog(`applyRemoteSDP: parsing remote SDP of type ${parsed.type}`);
+            appendLog(`Processing remote SDP: ${parsed.type}`);
             
-            // If we received an offer, create answer
             if (parsed.type === 'offer') {
                 await createAnswerFromRemote(parsed);
-                
-                // If this is a call offer, automatically start our media
-                if (parsed.sdp && parsed.sdp.includes('m=video')) {
-                    appendLog('Detected video call offer - preparing media...');
-                    // Don't automatically start media, let the user click the call button
-                }
             } else {
-                // answer
-                appendLog('applyRemoteSDP: processing remote answer');
                 if (!pc) createPeerConnectionWithStatus(onDataMessage);
-                
                 await pc!.setRemoteDescription(parsed);
-                appendLog('setRemoteDescription: remote answer applied successfully');
+                appendLog('Remote answer applied');
                 
-                // If we're in a call and just received the answer, the connection should be ready
                 if (isInCall()) {
-                    appendLog('Call SDP exchange completed - media connection established');
+                    appendLog('Call SDP exchange completed');
                     setCallStatus('active');
                 }
             }
@@ -699,203 +532,92 @@ export default function App() {
         }
     }
 
-    // sendMessage removed (chat UI removed)
+
 
     onCleanup(() => {
         if (pc) pc.close();
     });
 
     onMount(() => {
-        // No connections to load from storage since we're using in-memory only
-        appendLog('Application ready - connections will be created when WebRTC connections are established');
+        appendLog('Application ready');
         
-        // Safari specific: Enhanced user interaction handling
-        const handleUserInteraction = (event: Event) => {
+        const handleUserInteraction = () => {
             const videos = document.querySelectorAll('video');
             videos.forEach(video => {
                 if (video.srcObject && (video as HTMLVideoElement).paused) {
-                    (video as HTMLVideoElement).play().then(() => {
-                        console.log('Video playing after user interaction');
-                    }).catch(err => {
-                        console.log('Video play after interaction failed:', err);
-                        // Try to unmute if that's the issue
-                        (video as HTMLVideoElement).muted = true;
-                        (video as HTMLVideoElement).play().catch(e => console.log('Muted play failed:', e));
-                    });
+                    (video as HTMLVideoElement).muted = true;
+                    (video as HTMLVideoElement).play().catch(() => {});
                 }
             });
-            
-            // Safari specific: Special handling for local video
-            const localVideo = document.querySelector('#local-video-pip') as HTMLVideoElement;
-            if (localVideo && localVideo.srcObject && localVideo.paused) {
-                localVideo.muted = true; // Ensure muted for autoplay
-                localVideo.play().then(() => {
-                    console.log('Local video playing after user interaction');
-                }).catch(err => {
-                    console.log('Local video interaction play failed:', err);
-                });
-            }
         };
         
-        // Add multiple interaction listeners for Safari autoplay
-        const events = ['click', 'keydown', 'touchstart', 'mousedown'];
-        events.forEach(eventType => {
+        ['click', 'keydown', 'touchstart', 'mousedown'].forEach(eventType => {
             document.addEventListener(eventType, handleUserInteraction, { once: true, passive: true });
         });
-        
-        // Safari specific: Add continuous interaction handling
-        const continuousHandler = () => {
-            if (remoteStream() || localStream()) {
-                const videos = document.querySelectorAll('video');
-                videos.forEach(video => {
-                    if (video.srcObject && (video as HTMLVideoElement).paused) {
-                        (video as HTMLVideoElement).play().catch(() => {});
-                    }
-                });
-            }
-        };
-        document.addEventListener('click', continuousHandler, { passive: true });
     });
 
-    // Auto-scroll logs and chat to bottom when new content is added
     createEffect(() => {
-        const logsCount = log().length;
-        if (logsCount > 0) {
-            setTimeout(() => {
-                const logsContainer = document.getElementById('logs-container');
-                if (logsContainer) {
-                    logsContainer.scrollTop = logsContainer.scrollHeight;
-                }
-            }, 0);
+        if (log().length > 0) {
+            const logsContainer = document.getElementById('logs-container');
+            if (logsContainer) {
+                logsContainer.scrollTop = logsContainer.scrollHeight;
+            }
         }
     });
 
     createEffect(() => {
         if (showChatWindow()) {
-            setTimeout(() => {
-                const chatContainer = document.getElementById('chat-messages');
-                if (chatContainer) {
-                    chatContainer.scrollTop = chatContainer.scrollHeight;
-                }
-            }, 0);
-        }
-    });
-
-    // Reactive effects for video streams
-    createEffect(() => {
-        // Update remote video element
-        const remoteVideo = document.querySelector('#remote-video-fullscreen') as HTMLVideoElement;
-        if (remoteVideo && remoteStream()) {
-            remoteVideo.srcObject = remoteStream();
-            
-            // Safari specific: ensure video metadata is loaded before playing
-            remoteVideo.onloadedmetadata = () => {
-                const attemptPlay = (attempts = 0) => {
-                    if (attempts >= 8) return;
-                    
-                    remoteVideo.play().then(() => {
-                        console.log('Remote video playing successfully');
-                    }).catch(err => {
-                        console.log(`Remote video play attempt ${attempts + 1} failed:`, err);
-                        setTimeout(() => attemptPlay(attempts + 1), 300 * (attempts + 1));
-                    });
-                };
-                attemptPlay();
-            };
-            
-            // Force metadata load
-            remoteVideo.load();
-        }
-    });
-
-    createEffect(() => {
-        // Update local video element
-        const localVideo = document.querySelector('#local-video-pip') as HTMLVideoElement;
-        if (localVideo && localStream()) {
-            localVideo.srcObject = localStream();
-            
-            // Safari specific: enhanced local video handling
-            const handleLocalVideoPlay = () => {
-                const attemptPlay = (attempts = 0) => {
-                    if (attempts >= 12) return;
-                    
-                    localVideo.play().then(() => {
-                        console.log('Local video playing successfully from effect');
-                        
-                        // Verify it's actually playing
-                        setTimeout(() => {
-                            if (localVideo.paused) {
-                                console.log('Local video still paused, retrying...');
-                                attemptPlay(attempts + 1);
-                            }
-                        }, 500);
-                        
-                    }).catch(err => {
-                        console.log(`Local video effect play attempt ${attempts + 1} failed:`, err);
-                        
-                        // Safari specific: try different approaches
-                        if (attempts === 3) {
-                            // Try with muted explicitly
-                            localVideo.muted = true;
-                        } else if (attempts === 6) {
-                            // Try with user gesture fallback
-                            const attemptWithGesture = () => {
-                                localVideo.play().catch(e => console.log('Gesture local play failed:', e));
-                            };
-                            document.addEventListener('click', attemptWithGesture, { once: true });
-                        }
-                        
-                        setTimeout(() => attemptPlay(attempts + 1), 200 * (attempts + 1));
-                    });
-                };
-                attemptPlay();
-            };
-            
-            // Try multiple approaches for Safari
-            if (localVideo.readyState >= 2) { // HAVE_CURRENT_DATA
-                handleLocalVideoPlay();
-            } else {
-                localVideo.onloadedmetadata = handleLocalVideoPlay;
-                localVideo.load();
+            const chatContainer = document.getElementById('chat-messages');
+            if (chatContainer) {
+                chatContainer.scrollTop = chatContainer.scrollHeight;
             }
         }
     });
 
-    const [logsPos, setLogsPos] = createSignal<{ x: number; y: number }>({ x: window.innerWidth - 400, y: 40 });
-    const [dragging, setDragging] = createSignal(false);
-    let dragOffset = { x: 0, y: 0 };
+    createEffect(() => {
+        const remoteVideo = document.querySelector('#remote-video-fullscreen') as HTMLVideoElement;
+        if (remoteVideo && remoteStream()) {
+            remoteVideo.srcObject = remoteStream();
+            attemptVideoPlay('#remote-video-fullscreen');
+        }
+    });
 
-    function onLogsPointerDown(e: PointerEvent) {
+    createEffect(() => {
+        const localVideo = document.querySelector('#local-video-pip') as HTMLVideoElement;
+        if (localVideo && localStream()) {
+            localVideo.srcObject = localStream();
+            localVideo.muted = true;
+            attemptVideoPlay('#local-video-pip');
+        }
+    });
+
+    const [logsPos, setLogsPos] = createSignal({ x: window.innerWidth - 400, y: 40 });
+    const [dragging, setDragging] = createSignal(false);
+    const dragOffset = { x: 0, y: 0 };
+
+    function onLogsPointerDown(e: PointerEvent): void {
         setDragging(true);
         const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
         dragOffset.x = e.clientX - rect.left;
         dragOffset.y = e.clientY - rect.top;
-        try { (e.target as Element).setPointerCapture?.((e as any).pointerId); } catch {}
+        (e.target as Element)?.setPointerCapture?.((e as any).pointerId);
         e.stopPropagation();
     }
 
-    function onLogsPointerMove(e: PointerEvent) {
+    function onLogsPointerMove(e: PointerEvent): void {
         if (!dragging()) return;
         
-        // Calculate right position (distance from right edge)
-        const maxX = window.innerWidth - 360; // Maximum x from left
-        const minX = 0;
-        const newX = Math.min(maxX, Math.max(minX, e.clientX - dragOffset.x));
+        const maxX = window.innerWidth - 360;
+        const newX = Math.max(0, Math.min(maxX, e.clientX - dragOffset.x));
+        const newY = Math.max(0, Math.min(window.innerHeight - 320, e.clientY - dragOffset.y));
         
-        // Calculate bottom position (distance from bottom edge)
-        const maxBottom = window.innerHeight - 100; // Minimum distance from top
-        const minBottom = 0; // Minimum distance from bottom
-        const newBottom = Math.min(maxBottom, Math.max(minBottom, window.innerHeight - (e.clientY - dragOffset.y + 320)));
-        
-        setLogsPos({ x: newX, y: newBottom });
+        setLogsPos({ x: newX, y: newY });
     }
 
-    function onLogsPointerUp(e: PointerEvent) {
+    function onLogsPointerUp(): void {
         setDragging(false);
-        try { (e.target as Element).releasePointerCapture?.((e as any).pointerId); } catch {}
     }
 
-    // global listeners for pointer move/up
     window.addEventListener('pointermove', onLogsPointerMove as any);
     window.addEventListener('pointerup', onLogsPointerUp as any);
     onCleanup(() => {
@@ -903,7 +625,7 @@ export default function App() {
         window.removeEventListener('pointerup', onLogsPointerUp as any);
     });
 
-    // Chat functions removed - messages logged only
+
 
     return (
         <div class={`relative w-full h-screen overflow-hidden transition-colors duration-300 ${isInCall() ? 'bg-black' : 'bg-gray-50'}`}>
@@ -911,26 +633,14 @@ export default function App() {
             {/* Full Screen Video Call Overlay */}
             {isInCall() && (
                 <div class="fixed inset-0 z-50 bg-black">
-                    {/* Remote Video (Full Background) */}
                     <video 
                         id="remote-video-fullscreen"
-                        ref={(el) => {
-                            if (el) {
-                                el.srcObject = remoteStream() || null;
-                                // Safari specific: better video initialization
-                                if (remoteStream()) {
-                                    el.load(); // Force metadata loading
-                                    el.play().catch(err => console.log('Initial play failed:', err));
-                                }
-                            }
-                        }}
                         class="absolute inset-0 w-full h-full object-cover"
                         autoplay
                         playsinline
                         muted={false}
                         controls={false}
                         disablepictureinpicture
-                        crossOrigin="anonymous"
                     />
                     
                     {!remoteStream() && (
@@ -940,8 +650,6 @@ export default function App() {
                             </div>
                         </div>
                     )}
-                    
-                    {/* Local Video (Picture-in-Picture) */}
                     {localStream() && (
                         <div class="absolute top-4 right-4 w-48 bg-black/80 backdrop-blur-sm rounded-2xl overflow-hidden shadow-2xl border border-white/10" style="aspect-ratio: auto;">
                             {isVideoMuted() ? (
@@ -957,43 +665,15 @@ export default function App() {
                             ) : (
                                 <video 
                                     id="local-video-pip"
-                                    ref={(el) => {
-                                        if (el) {
-                                            el.srcObject = localStream() || null;
-                                            // Safari specific: enhanced local video initialization
-                                            if (localStream()) {
-                                                // Force metadata load
-                                                el.load();
-                                                
-                                                // Safari specific: multiple play attempts for local video
-                                                const attemptLocalPlay = (attempts = 0) => {
-                                                    if (attempts >= 10) return;
-                                                    
-                                                    el.play().then(() => {
-                                                        console.log('Local video playing successfully from ref');
-                                                    }).catch(err => {
-                                                        console.log(`Local video ref play attempt ${attempts + 1} failed:`, err);
-                                                        setTimeout(() => attemptLocalPlay(attempts + 1), 200 * (attempts + 1));
-                                                    });
-                                                };
-                                                
-                                                // Start play attempts immediately
-                                                setTimeout(() => attemptLocalPlay(), 100);
-                                            }
-                                        }
-                                    }}
                                     class="w-full h-full object-cover"
                                     autoplay
                                     muted
                                     playsinline
                                     controls={false}
-                                    crossOrigin="anonymous"
                                 />
                             )}
                         </div>
                     )}
-                    
-                    {/* Top Bar - Connection Info */}
                     <div class="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/60 to-transparent p-6">
                         <div class="flex items-center justify-between">
                             <div class="flex items-center gap-2">
@@ -1012,8 +692,6 @@ export default function App() {
 
                         </div>
                     </div>
-                    
-                    {/* Bottom Controls */}
                     <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-6">
                         <div class="flex items-center justify-center gap-6">
                             <button
@@ -1069,10 +747,6 @@ export default function App() {
                     </div>
                 </div>
             )}
-
-
-
-            {/* Incoming Call Modal */}
             {incomingCall() && (
                 <div class="fixed inset-0 z-40 flex items-center justify-center" style={{ 'background-color': 'rgba(0, 0, 0, 0.3)' }}>
                     <div class="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
@@ -1187,11 +861,6 @@ export default function App() {
                             <div class="relative h-48">
                                 {/* Remote Video (full size) */}
                                 <video 
-                                    ref={(el) => {
-                                        if (el && remoteStream()) {
-                                            el.srcObject = remoteStream();
-                                        }
-                                    }}
                                     class="w-full h-full object-cover"
                                     autoplay
                                     playsinline
@@ -1207,17 +876,12 @@ export default function App() {
                                 {/* Local Video (picture-in-picture) */}
                                 {localStream() && (
                                     <div class="absolute bottom-2 right-2 w-24 bg-black/80 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/10" style="aspect-ratio: auto;">
-                                        <video 
-                                            ref={(el) => {
-                                                if (el && localStream()) {
-                                                    el.srcObject = localStream();
-                                                }
-                                            }}
+                                <video 
                                     class="w-full h-full object-contain"
-                                            autoplay
-                                            muted
-                                            playsinline
-                                        />
+                                    autoplay
+                                    muted
+                                    playsinline
+                                />
                                     </div>
                                 )}
                                 
@@ -1301,9 +965,8 @@ export default function App() {
             <div
                 class="fixed bg-white border rounded shadow z-50"
                 style={{ 
-                    right: (window.innerWidth - logsPos().x - 360) + 'px',
-                    bottom: logsPos().y + 'px', 
-                    top: 'auto', 
+                    left: logsPos().x + 'px',
+                    top: logsPos().y + 'px', 
                     width: '360px' 
                 }}
             >
@@ -1332,7 +995,7 @@ export default function App() {
                         {isInCall() && (
                             <div class="mb-4 p-3 bg-green-900/30 border border-green-700 rounded-lg">
                                 <div class="text-sm text-green-300">
-                                    <strong>Video Call in Progress:</strong> SDP exchange is handled automatically via the data channel.
+                                    Video Call in Progress: SDP exchange is automatic via data channel
                                 </div>
                             </div>
                         )}
