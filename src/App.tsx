@@ -1,5 +1,9 @@
 import { createSignal, onCleanup, onMount, createEffect } from 'solid-js';
 import SDPExchange from './components/SDPExchange';
+import Logs from './components/Logs';
+import Messages from './components/Messages';
+import IncomingCall from './components/IncomingCall';
+import VideoCall from './components/VideoCall';
 
 type CallMessage = 
     | { type: 'call-request'; from: string }
@@ -35,12 +39,12 @@ async function waitForIceGatheringComplete(pc: RTCPeerConnection): Promise<void>
 export default function App() {
     const [localSDP, setLocalSDP] = createSignal<string>('');
     const [remoteSDP, setRemoteSDP] = createSignal<string>('');
-    const [showSDPModal, setShowSDPModal] = createSignal(true);
+    
     const [copied, setCopied] = createSignal(false);
     const [log, setLog] = createSignal<string[]>([]);
     const [connectionStatus, setConnectionStatus] = createSignal<'disconnected' | 'connecting' | 'connected'>('disconnected');
 
-    const [showChatWindow, setShowChatWindow] = createSignal(false);
+    
     const [chatMessages, setChatMessages] = createSignal<Array<{text: string, isOwn: boolean}>>([]);
     const [messageInput, setMessageInput] = createSignal('');
 
@@ -96,9 +100,7 @@ export default function App() {
             appendLog(`Connection state: ${state}`);
             
             if (state === 'connected') {
-                setShowSDPModal(false);
                 setConnectionStatus('connected');
-                setShowChatWindow(true);
                 setLocalSDP('');
                 setRemoteSDP('');
                 appendLog('Connection established');
@@ -213,42 +215,11 @@ export default function App() {
         setIsInCall(false);
     }
 
-    function ConnectionStatusIndicator() {
-        const status = connectionStatus();
-        return (
-            <div class={`w-2 h-2 rounded-full ${
-                status === 'connected' ? 'bg-green-500' : 
-                status === 'connecting' ? 'bg-yellow-500 animate-pulse' : 
-                'bg-gray-400'
-            }`} title={status} />
-        );
-    }
+    
 
-    const VideoOffIcon = (props: { class?: string }) => (
-        <svg xmlns="http://www.w3.org/2000/svg" class={props.class || "w-6 h-6"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-        </svg>
-    );
+    
 
-    const AudioOffIcon = (props: { class?: string }) => (
-        <svg xmlns="http://www.w3.org/2000/svg" class={props.class || "w-6 h-6"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2" />
-        </svg>
-    );
-
-    const VideoIcon = (props: { class?: string }) => (
-        <svg xmlns="http://www.w3.org/2000/svg" class={props.class || "w-6 h-6"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
-        </svg>
-    );
-
-    const AudioIcon = (props: { class?: string }) => (
-        <svg xmlns="http://www.w3.org/2000/svg" class={props.class || "w-6 h-6"} fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11a7 7 0 01-7 7m0 0a7 7 0 01-7-7m7 7v4m0 0H8m4 0h4m-4-8a3 3 0 01-3-3V5a3 3 0 116 0v6a3 3 0 01-3 3z" />
-        </svg>
-    );
+    
 
     async function handleCallOffer(sdp: RTCSessionDescriptionInit): Promise<void> {
         try {
@@ -515,7 +486,7 @@ export default function App() {
         setLocalSDP(JSON.stringify(connection.localDescription));
         appendLog('Answer created');
         
-        setShowSDPModal(true);
+        
     }
 
     async function applyRemoteSDP(): Promise<void> {
@@ -567,11 +538,9 @@ export default function App() {
     });
 
     createEffect(() => {
-        if (showChatWindow()) {
-            const chatContainer = document.getElementById('chat-messages');
-            if (chatContainer) {
-                chatContainer.scrollTop = chatContainer.scrollHeight;
-            }
+        const chatContainer = document.getElementById('chat-messages');
+        if (chatContainer) {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
         }
     });
 
@@ -592,358 +561,57 @@ export default function App() {
         }
     });
 
-    const [logsPos, setLogsPos] = createSignal({ x: window.innerWidth - 400, y: 40 });
-    const [dragging, setDragging] = createSignal(false);
-    const dragOffset = { x: 0, y: 0 };
-
-    function onLogsPointerDown(e: PointerEvent): void {
-        setDragging(true);
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        dragOffset.x = e.clientX - rect.left;
-        dragOffset.y = e.clientY - rect.top;
-        (e.target as Element)?.setPointerCapture?.((e as any).pointerId);
-        e.stopPropagation();
-    }
-
-    function onLogsPointerMove(e: PointerEvent): void {
-        if (!dragging()) return;
-        
-        const maxX = window.innerWidth - 360;
-        const newX = Math.max(0, Math.min(maxX, e.clientX - dragOffset.x));
-        const newY = Math.max(0, Math.min(window.innerHeight - 320, e.clientY - dragOffset.y));
-        
-        setLogsPos({ x: newX, y: newY });
-    }
-
-    function onLogsPointerUp(): void {
-        setDragging(false);
-    }
-
-    window.addEventListener('pointermove', onLogsPointerMove as any);
-    window.addEventListener('pointerup', onLogsPointerUp as any);
-    onCleanup(() => {
-        window.removeEventListener('pointermove', onLogsPointerMove as any);
-        window.removeEventListener('pointerup', onLogsPointerUp as any);
-    });
+    
 
     return (
         <div class={`relative w-full h-screen overflow-hidden transition-colors duration-300 ${isInCall() ? 'bg-black' : 'bg-gray-50'}`}>
 
-            {/* Full Screen Video Call Overlay */}
-            {isInCall() && (
-                <div class="fixed inset-0 z-50 bg-black">
-                    <video 
-                        id="remote-video-fullscreen"
-                        class="absolute inset-0 w-full h-full object-cover"
-                        autoplay
-                        playsinline
-                        muted={false}
-                        controls={false}
-                        disablepictureinpicture
-                    />
-                    
-                    {!remoteStream() && (
-                        <div class="absolute inset-0 flex items-center justify-center bg-gray-900">
-                            <div class="text-white text-xl">
-                                {callStatus() === 'connecting' ? 'Connecting...' : 'Waiting for remote video...'}
-                            </div>
-                        </div>
-                    )}
-                    {localStream() && (
-                        <div class="absolute top-4 right-4 w-48 bg-black/80 backdrop-blur-sm rounded-2xl overflow-hidden shadow-2xl border border-white/10" style="aspect-ratio: auto;">
-                            {isVideoMuted() ? (
-                                <div class="w-full h-full flex items-center justify-center bg-gray-900/90 backdrop-blur-sm">
-                                <div class="text-white/80 text-center">
-                                    <VideoOffIcon class="w-12 h-12" />
-                                    <div class="text-xs">Camera Off</div>
-                                </div>
-                                </div>
-                            ) : (
-                                <video 
-                                    id="local-video-pip"
-                                    class="w-full h-full object-cover"
-                                    autoplay
-                                    muted
-                                    playsinline
-                                    controls={false}
-                                />
-                            )}
-                        </div>
-                    )}
-                    <div class="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/60 to-transparent p-6">
-                        <div class="flex items-center justify-between">
-                            <div class="flex items-center gap-2">
-                                <div class="font-medium text-white">Chat</div>
-                                <div class="flex items-center gap-1">
-                                    <ConnectionStatusIndicator />
-                                </div>
-                            </div>
-
-                        </div>
-                    </div>
-                    <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-6">
-                        <div class="flex items-center justify-center gap-6">
-                            <button
-                                onClick={toggleAudioMute}
-                                class={`w-14 h-14 rounded-full backdrop-blur-sm flex items-center justify-center text-white transition-all transform hover:scale-105 ${
-                                    isAudioMuted() 
-                                        ? 'bg-red-500/80 hover:bg-red-500' 
-                                        : 'bg-white/20 hover:bg-white/30'
-                                }`}
-                                title={isAudioMuted() ? "Unmute microphone" : "Mute microphone"}
-                            >
-                                {isAudioMuted() ? <AudioOffIcon /> : <AudioIcon />}
-                            </button>
-                            
-                            <button
-                                onClick={endCall}
-                                class="w-16 h-16 rounded-full bg-red-500 hover:bg-red-600 flex items-center justify-center text-white transition-all transform hover:scale-105 shadow-xl"
-                                title="End call"
-                            >
-                                <div class="w-8 h-8 bg-white rounded-sm"></div>
-                            </button>
-                            
-                            <button
-                                onClick={toggleVideoMute}
-                                class={`w-14 h-14 rounded-full backdrop-blur-sm flex items-center justify-center text-white transition-all transform hover:scale-105 ${
-                                    isVideoMuted() 
-                                        ? 'bg-red-500/80 hover:bg-red-500' 
-                                        : 'bg-white/20 hover:bg-white/30'
-                                }`}
-                                title={isVideoMuted() ? "Turn on camera" : "Turn off camera"}
-                            >
-                                {isVideoMuted() ? <VideoOffIcon /> : <VideoIcon />}
-                            </button>
-                        </div>
-                    </div>
-                </div>
-            )}
+            <VideoCall
+                isInCall={isInCall}
+                localStream={localStream}
+                remoteStream={remoteStream}
+                isVideoMuted={isVideoMuted}
+                isAudioMuted={isAudioMuted}
+                connectionStatus={connectionStatus}
+                toggleAudioMute={toggleAudioMute}
+                toggleVideoMute={toggleVideoMute}
+                endCall={endCall}
+            />
             {incomingCall() && (
-                <div class="fixed inset-0 z-40 flex items-center justify-center" style={{ 'background-color': 'rgba(0, 0, 0, 0.3)' }}>
-                    <div class="bg-white rounded-lg shadow-xl p-6 max-w-sm w-full mx-4">
-                            <div class="text-center mb-4">
-                                <div class="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-3">
-                                    <VideoIcon class="w-8 h-8 text-green-600" />
-                                </div>
-                            <h3 class="text-lg font-semibold mb-1">Incoming Video Call</h3>
-                            <p class="text-gray-600">{incomingCall()!.from} is calling you</p>
-                        </div>
-                        
-                        <div class="flex gap-3 justify-center">
-                            <button
-                                onClick={() => {
-                                    setIncomingCall(null);
-                                    sendDataMessage({ type: 'call-accept', from: 'me' } as CallMessage);
-                                }}
-                                class="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-2"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                                </svg>
-                                Accept
-                            </button>
-                            <button
-                                onClick={() => {
-                                    setIncomingCall(null);
-                                    sendDataMessage({ type: 'call-decline', from: 'me' } as CallMessage);
-                                }}
-                                class="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors flex items-center gap-2"
-                            >
-                                <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
-                                </svg>
-                                Decline
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <IncomingCall
+                    onAccept={() => {
+                        setIncomingCall(null);
+                        sendDataMessage({ type: 'call-accept', from: 'me' } as CallMessage);
+                    }}
+                    onDecline={() => {
+                        setIncomingCall(null);
+                        sendDataMessage({ type: 'call-decline', from: 'me' } as CallMessage);
+                    }}
+                />
             )}
 
-            {/* Chat Window */}
-            {showChatWindow() && (
-                <div class={`fixed bg-gray-900 shadow-lg z-30 flex flex-col transition-all duration-300 ${
-                    isInCall() 
-                        ? 'bottom-4 right-4 w-80 h-[600px] rounded-2xl' 
-                        : 'inset-0 rounded-none'
-                }`}>
-                    <div class={`px-4 py-3 flex items-center justify-between bg-gray-800/90 backdrop-blur-lg ${isInCall() ? 'rounded-t-2xl' : 'rounded-t-2xl'}`}>
-                        <div class="flex items-center gap-2">
-                            <div class="font-medium text-white">Chat</div>
-                            <div class="flex items-center gap-1">
-                                <ConnectionStatusIndicator />
-                            </div>
-                        </div>
-                        <div class="flex items-center gap-2">
-                            {!isInCall() ? (
-                                <button
-                                    class={`p-2 rounded-full backdrop-blur-sm transition-all duration-200 hover:scale-110 ${
-                                        connectionStatus() === 'connected' && callStatus() === 'idle'
-                                            ? 'bg-green-500/20 text-green-400 hover:bg-green-500/30' 
-                                            : callStatus() === 'calling'
-                                            ? 'bg-yellow-500/20 text-yellow-400 animate-pulse'
-                                            : 'bg-gray-500/20 text-gray-400 cursor-not-allowed'
-                                    }`}
-                                    onClick={startCall}
-                                    disabled={connectionStatus() !== 'connected' || callStatus() !== 'idle'}
-                                    title={connectionStatus() !== 'connected' ? 'No connection' : callStatus() === 'calling' ? 'Calling...' : callStatus() === 'idle' ? 'Start video call' : 'Call in progress...'}
-                                >
-                                    {callStatus() === 'calling' ? (
-                                        <AudioIcon class="w-5 h-5" />
-                                    ) : (
-                                        <VideoIcon class="w-5 h-5" />
-                                    )}
-                                </button>
-                            ) : (
-                                <button
-                                    class="p-2 rounded-full bg-red-500/20 text-red-400 hover:bg-red-500/30 backdrop-blur-sm transition-all duration-200 hover:scale-110"
-                                    onClick={endCall}
-                                    title="End call"
-                                >
-                                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M3 12l6.414 6.414a2 2 0 001.414.586H19a2 2 0 002-2V7a2 2 0 00-2-2h-8.172a2 2 0 00-1.414.586L3 12z" />
-                                    </svg>
-                                </button>
-                            )}
-
-                        </div>
-                    </div>
-                    
-                    {/* Video Call Area */}
-                    {isInCall() && (
-                        <div class="border-t border-gray-700/50 bg-gray-800/50 backdrop-blur-sm">
-                            {callStatus() === 'connecting' && (
-                                <div class="bg-blue-600/80 backdrop-blur-sm text-white text-xs px-3 py-2 text-center border border-blue-500/30">
-                                    Copy the SDP from the modal and send it to the remote peer
-                                </div>
-                            )}
-                            <div class="relative h-48">
-                                {/* Remote Video (full size) */}
-                                <video 
-                                    class="w-full h-full object-cover"
-                                    autoplay
-                                    playsinline
-                                />
-                                {!remoteStream() && (
-                                    <div class="absolute inset-0 flex items-center justify-center bg-gray-800">
-                                        <div class="text-white text-sm">
-                                            {callStatus() === 'connecting' ? 'Connecting...' : 'Waiting for remote video...'}
-                                        </div>
-                                    </div>
-                                )}
-                                
-                                {/* Local Video (picture-in-picture) */}
-                                {localStream() && (
-                                    <div class="absolute bottom-2 right-2 w-24 bg-black/80 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/10" style="aspect-ratio: auto;">
-                                        <video 
-                                            class="w-full h-full object-contain"
-                                            autoplay
-                                            muted
-                                            playsinline
-                                        />
-                                    </div>
-                                )}
-                                
-                                {/* Call Status Indicator */}
-                                <div class="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1 border border-white/10">
-                                    <div class={`w-2 h-2 rounded-full ${
-                                        callStatus() === 'active' ? 'bg-green-500 animate-pulse' :
-                                        callStatus() === 'connecting' ? 'bg-yellow-500 animate-pulse' :
-                                        'bg-red-500'
-                                    }`}></div>
-                                    {callStatus() === 'connecting' ? 'Connecting...' : 
-                                     callStatus() === 'active' ? 'Live' : 
-                                     callStatus() === 'ringing' ? 'Ringing...' : 
-                                     'Ready'}
-                                </div>
-                            </div>
-                        </div>
-                    )}
-                    
-                    <div class={`overflow-y-auto p-4 space-y-2 ${isInCall() ? 'h-32' : 'flex-1 min-h-0'}`} id="chat-messages">
-                        {chatMessages().length > 0 ? (
-                            chatMessages().map((msg) => (
-                                <div 
-                                    class={`text-sm ${msg.isOwn ? 'text-right' : 'text-left'}`}
-                                >
-                                    <span 
-                                        class={`inline-block px-3 py-2 rounded-2xl backdrop-blur-sm ${
-                                            msg.isOwn 
-                                                ? 'bg-blue-600/80 text-white' 
-                                                : 'bg-gray-700/60 text-gray-100'
-                                        }`}
-                                    >
-                                        {msg.text}
-                                    </span>
-                                </div>
-                            ))
-                        ) : (
-                            <div class="text-center text-gray-400 text-sm mt-4">
-                                No messages yet. Start a conversation!
-                            </div>
-                        )}
-                    </div>
-                    
-                    <div class={`px-4 py-3 ${isInCall() ? '' : 'rounded-b-2xl'}`}>
-                        <div class="flex gap-2">
-                            <input 
-                                type="text" 
-                                class="flex-1 px-4 py-3 bg-white/10 backdrop-blur-md rounded-full border border-white/20 text-white placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-400/50 focus:border-transparent"
-                                placeholder="Type a message..."
-                                value={messageInput()}
-                                onInput={(e: any) => setMessageInput(e.target.value)}
-                                onKeyPress={(e) => e.key === 'Enter' && sendMessage()}
-                            />
-                            <button 
-                                class="px-6 py-3 bg-blue-600/80 backdrop-blur-sm text-white rounded-full hover:bg-blue-500/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105"
-                                onClick={sendMessage}
-                                disabled={!messageInput().trim() || connectionStatus() !== 'connected'}
-                            >
-                                Send
-                            </button>
-                        </div>
-                        {connectionStatus() !== 'connected' && (
-                            <div class="text-xs text-red-400 mt-1">
-                                Connection not ready
-                            </div>
-                        )}
-                        {callStatus() === 'calling' && (
-                            <div class="text-xs text-yellow-400 mt-1 animate-pulse">
-                                Calling... waiting for response
-                            </div>
-                        )}
-                        {callStatus() === 'ringing' && (
-                            <div class="text-xs text-green-400 mt-1 animate-pulse">
-                                Incoming call - check call popup
-                            </div>
-                        )}
-                    </div>
-                </div>
+            {connectionStatus() === 'connected' && (
+                <Messages
+                    chatMessages={chatMessages}
+                    messageInput={messageInput}
+                    connectionStatus={connectionStatus}
+                    callStatus={callStatus}
+                    isInCall={isInCall}
+                    localStream={localStream}
+                    remoteStream={remoteStream}
+                    isVideoMuted={isVideoMuted}
+                    onMessageInput={(value) => setMessageInput(value)}
+                    onSendMessage={sendMessage}
+                    onStartCall={startCall}
+                    onEndCall={endCall}
+                />
             )}
 
-            <div
-                class="fixed bg-white border rounded shadow z-50"
-                style={{ 
-                    left: logsPos().x + 'px',
-                    top: logsPos().y + 'px', 
-                    width: '360px' 
-                }}
-            >
-                <div class="px-3 py-2 bg-gray-100 border-b cursor-grab flex items-center justify-between" onPointerDown={(e:any)=>onLogsPointerDown(e)}>
-                    <div class="text-sm font-medium">Logs</div>
-                    <div class="text-xs text-gray-600">
-                        <button class="px-2 py-1" onClick={() => setLogsPos({ x: window.innerWidth - 400, y: 40 })}>Reset</button>
-                    </div>
-                </div>
-                <div class="h-80 p-2 overflow-auto" id="logs-container">
-                    {log().map((l) => (
-                        <div class="text-xs text-gray-700">{l}</div>
-                    ))}
-                </div>
-            </div>
+            <Logs log={log} />
 
-            <SDPExchange
-                showSDPModal={showSDPModal}
-                localSDP={localSDP}
+            {connectionStatus() !== 'connected' && (
+                <SDPExchange
+                    localSDP={localSDP}
                 remoteSDP={remoteSDP}
                 copied={copied}
                 onCreateOffer={createOffer}
@@ -962,7 +630,8 @@ export default function App() {
                     }
                 }}
                 appendLog={appendLog}
-            />
+                />
+            )}
         </div>
     );
 }

@@ -1,7 +1,4 @@
-import { createSignal } from 'solid-js';
-
 interface SDPExchangeProps {
-    showSDPModal: () => boolean;
     localSDP: () => string;
     remoteSDP: () => string;
     copied: () => boolean;
@@ -15,10 +12,8 @@ interface SDPExchangeProps {
 
 export default function SDPExchange(props: SDPExchangeProps) {
     return (
-        <>
-            {props.showSDPModal() && (
-                <div class="fixed inset-0 z-40 flex items-center justify-center bg-gray-900">
-                    <div class="w-full h-full p-6 overflow-auto">
+        <div class="fixed inset-0 z-40 flex items-center justify-center bg-gray-900">
+            <div class="w-full h-full p-6 overflow-auto">
                         <div class="mb-2">
                             <h2 class="text-lg font-semibold text-gray-100">
                                 SDP Exchange
@@ -72,9 +67,8 @@ export default function SDPExchange(props: SDPExchangeProps) {
                             </button>
                         </div>
 
-                    </div>
                 </div>
-            )}
-        </>
+
+        </div>
     );
 }
