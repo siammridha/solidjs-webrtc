@@ -1,4 +1,5 @@
 import { createSignal, onCleanup, onMount, createEffect } from 'solid-js';
+import SDPExchange from './components/SDPExchange';
 
 type CallMessage = 
     | { type: 'call-request'; from: string }
@@ -940,75 +941,28 @@ export default function App() {
                 </div>
             </div>
 
-            {showSDPModal() && (
-                <div class="fixed inset-0 z-40 flex items-center justify-center bg-gray-900">
-                    <div class="w-full h-full p-6 overflow-auto">
-                        <div class="mb-2">
-                            <h2 class="text-lg font-semibold text-gray-100">
-                                SDP Exchange
-                            </h2>
-                        </div>
-                        
-                        {/* Local SDP Display */}
-                        <div class="mb-4">
-                            <div class="flex items-center justify-between mb-2">
-                                <label class="block text-sm font-medium text-gray-200">Local SDP</label>
-                                <button 
-                                    class="px-3 py-1 bg-green-600 text-white rounded disabled:bg-gray-600 hover:bg-green-700 transition-colors" 
-                                    onClick={async () => {
-                                        try {
-                                            await createOffer();
-                                            appendLog('Local SDP created');
-                                        } catch (e) {
-                                            appendLog('Failed to create offer: ' + String(e));
-                                        }
-                                    }}
-                                >
-                                    Create Offer
-                                </button>
-                            </div>
-                            <div class="flex gap-2">
-                                <textarea class="flex-1 h-64 p-2 border border-gray-600 rounded bg-gray-800 text-gray-100 font-mono text-sm" value={localSDP()} readonly />
-                                <button class="px-3 py-1 bg-indigo-600 text-white rounded self-start hover:bg-indigo-700 transition-colors" onClick={copyLocalSDP}>{copied() ? 'Copied' : 'Copy'}</button>
-                            </div>
-                        </div>
-
-                        {/* Remote SDP Input */}
-                        <div class="mb-4">
-                            <label class="block text-sm font-medium mb-2 text-gray-200">Remote SDP</label>
-                            <textarea 
-                                class="w-full h-32 p-2 border border-gray-600 rounded mb-2 bg-gray-800 text-gray-100 font-mono text-sm placeholder-gray-400" 
-                                placeholder="Paste remote SDP here... (Click to auto-paste)"
-                                value={remoteSDP()}
-                                onInput={(e: any) => setRemoteSDP(e.target.value)}
-                                onClick={async () => {
-                                    try {
-                                        const text = await navigator.clipboard.readText();
-                                        if (text && text.trim()) {
-                                            setRemoteSDP(text);
-                                            appendLog('Remote SDP auto-pasted from clipboard');
-                                        }
-                                    } catch (e) {
-                                        appendLog('Auto-paste failed: ' + String(e));
-                                    }
-                                }}
-                            />
-                            <button 
-                                class="px-3 py-1 bg-green-600 text-white rounded mr-2 hover:bg-green-700 transition-colors" 
-                                onClick={async () => {
-                                    if (remoteSDP()) {
-                                        await applyRemoteSDP();
-                                        appendLog('Remote SDP applied');
-                                    }
-                                }}
-                            >
-                                Set Remote SDP
-                            </button>
-                        </div>
-
-                    </div>
-                </div>
-            )}
+            <SDPExchange
+                showSDPModal={showSDPModal}
+                localSDP={localSDP}
+                remoteSDP={remoteSDP}
+                copied={copied}
+                onCreateOffer={createOffer}
+                onCopyLocalSDP={copyLocalSDP}
+                onRemoteSDPChange={setRemoteSDP}
+                onApplyRemoteSDP={applyRemoteSDP}
+                onAutoPaste={async () => {
+                    try {
+                        const text = await navigator.clipboard.readText();
+                        if (text && text.trim()) {
+                            setRemoteSDP(text);
+                            appendLog('Remote SDP auto-pasted from clipboard');
+                        }
+                    } catch (e) {
+                        appendLog('Auto-paste failed: ' + String(e));
+                    }
+                }}
+                appendLog={appendLog}
+            />
         </div>
     );
 }
