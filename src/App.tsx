@@ -566,17 +566,18 @@ export default function App() {
     return (
         <div class={`relative w-full h-screen overflow-hidden transition-colors duration-300 ${isInCall() ? 'bg-black' : 'bg-gray-50'}`}>
 
-            <VideoCall
-                isInCall={isInCall}
-                localStream={localStream}
-                remoteStream={remoteStream}
-                isVideoMuted={isVideoMuted}
-                isAudioMuted={isAudioMuted}
-                connectionStatus={connectionStatus}
-                toggleAudioMute={toggleAudioMute}
-                toggleVideoMute={toggleVideoMute}
-                endCall={endCall}
-            />
+            {isInCall() && (
+                <VideoCall
+                    localStream={localStream}
+                    remoteStream={remoteStream}
+                    isVideoMuted={isVideoMuted}
+                    isAudioMuted={isAudioMuted}
+                    connectionStatus={connectionStatus}
+                    toggleAudioMute={toggleAudioMute}
+                    toggleVideoMute={toggleVideoMute}
+                    endCall={endCall}
+                />
+            )}
             {incomingCall() && (
                 <IncomingCall
                     onAccept={() => {

@@ -3,7 +3,6 @@ import LocalVideo from './LocalVideo';
 import VideoCallControls from './VideoCallControls';
 
 interface VideoCallProps {
-    isInCall: () => boolean;
     localStream: () => MediaStream | null;
     remoteStream: () => MediaStream | null;
     isVideoMuted: () => boolean;
@@ -26,16 +25,16 @@ function ConnectionStatusIndicator(props: { status: 'disconnected' | 'connecting
 
 export default function VideoCall(props: VideoCallProps) {
     return (
-        <div class="fixed inset-0 z-50 bg-black" style={{ display: props.isInCall() ? 'block' : 'none' }}>
+        <div class="fixed inset-0 z-50 bg-black">
             <RemoteVideo
                 remoteStream={props.remoteStream}
-                callStatus={() => props.isInCall() ? 'active' : 'idle'}
+                callStatus={() => 'active'}
                 variant="fullscreen"
             />
             <LocalVideo
                 localStream={props.localStream}
                 isVideoMuted={props.isVideoMuted}
-                isInCall={props.isInCall}
+                isInCall={() => true}
                 variant="pip"
             />
             <div class="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/60 to-transparent p-6">
