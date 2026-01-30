@@ -8,7 +8,7 @@ export default function RemoteVideo(props: RemoteVideoProps) {
     const getVideoClasses = () => {
         switch (props.variant) {
             case 'fullscreen':
-                return 'absolute inset-0 w-full h-full object-cover';
+                return 'w-full h-full object-cover';
             case 'chat':
                 return 'w-full h-full object-cover';
             default:
@@ -19,7 +19,7 @@ export default function RemoteVideo(props: RemoteVideoProps) {
     const getContainerClasses = () => {
         switch (props.variant) {
             case 'fullscreen':
-                return 'fixed inset-0 z-50 bg-black';
+                return 'absolute inset-0 w-full h-full';
             case 'chat':
                 return 'relative h-48';
             default:

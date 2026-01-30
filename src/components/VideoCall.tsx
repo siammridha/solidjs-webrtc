@@ -37,7 +37,7 @@ export default function VideoCall(props: VideoCallProps) {
                 isInCall={() => true}
                 variant="pip"
             />
-            <div class="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/60 to-transparent p-6">
+            <div class="absolute top-0 left-0 right-0 bg-gradient-to-b from-black/60 to-transparent p-6 z-20">
                 <div class="flex items-center justify-between">
                     <div class="flex items-center gap-2">
                         <div class="font-medium text-white">Chat</div>
@@ -47,7 +47,7 @@ export default function VideoCall(props: VideoCallProps) {
                     </div>
                 </div>
             </div>
-            <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-6">
+            <div class="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/60 to-transparent p-6 z-20">
                 <VideoCallControls
                     isAudioMuted={props.isAudioMuted}
                     isVideoMuted={props.isVideoMuted}

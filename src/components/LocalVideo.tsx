@@ -31,7 +31,7 @@ export default function LocalVideo(props: LocalVideoProps) {
             case 'fullscreen':
                 return 'fixed inset-0 z-50 bg-black';
             case 'pip':
-                return 'absolute top-4 right-4 w-48 bg-black/80 backdrop-blur-sm rounded-2xl overflow-hidden shadow-2xl border border-white/10';
+                return 'absolute top-4 right-4 w-48 bg-black/80 backdrop-blur-sm rounded-2xl overflow-hidden shadow-2xl border border-white/10 z-10';
             case 'chat-pip':
                 return 'absolute bottom-2 right-2 w-24 bg-black/80 backdrop-blur-sm rounded-xl overflow-hidden shadow-lg border border-white/10';
             default:
@@ -45,9 +45,16 @@ export default function LocalVideo(props: LocalVideoProps) {
 
     return (
         <>
-            {props.localStream() && (
+            {props.isInCall() && (
                 <div class={getContainerClasses()} style={getContainerStyle()}>
-                    {props.isVideoMuted() ? (
+                    {!props.localStream() ? (
+                        <div class="w-full h-full flex items-center justify-center bg-gray-900/90 backdrop-blur-sm">
+                            <div class="text-white/80 text-center">
+                                <VideoOffIcon class={props.variant === 'chat-pip' ? 'w-6 h-6' : 'w-12 h-12'} />
+                                <div class={props.variant === 'chat-pip' ? 'text-xs' : 'text-sm'}>Loading...</div>
+                            </div>
+                        </div>
+                    ) : props.isVideoMuted() ? (
                         <div class="w-full h-full flex items-center justify-center bg-gray-900/90 backdrop-blur-sm">
                             <div class="text-white/80 text-center">
                                 <VideoOffIcon class={props.variant === 'chat-pip' ? 'w-6 h-6' : 'w-12 h-12'} />
